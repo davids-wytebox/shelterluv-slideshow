@@ -1,0 +1,79 @@
+<Window x:Class="ShelterPetViewer.FullscreenWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Shelter Pet Viewer"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowState="Normal"
+        WindowStartupLocation="Manual"
+        Background="#F2F2F0"
+        KeyDown="Window_KeyDown"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+    <Grid x:Name="RootGrid">
+        <Canvas x:Name="PhotoCanvas"
+                Background="#F2F2F0"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
+                SizeChanged="PhotoCanvas_SizeChanged" />
+
+        <TextBlock x:Name="NameText"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Top"
+                   Margin="36,28,36,0"
+                   TextAlignment="Center"
+                   FontSize="86"
+                   FontWeight="Bold"
+                   FontFamily="Candara, Trebuchet MS, Segoe UI, sans-serif"
+                   Foreground="#1E3A5F"
+                   TextWrapping="Wrap"
+                   Panel.ZIndex="20"/>
+
+        <StackPanel x:Name="InfoPanel"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    Margin="36,0,0,0"
+                    MaxWidth="300"
+                    Panel.ZIndex="20">
+            <Border x:Name="BioCard"
+                    Background="#FAFAF8"
+                    CornerRadius="4"
+                    Padding="14"
+                    HorizontalAlignment="Left">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="20" ShadowDepth="5" Opacity="0.30" Direction="270"/>
+                </Border.Effect>
+                <TextBlock x:Name="BioText"
+                           FontSize="16"
+                           Foreground="#444"
+                           TextWrapping="Wrap"
+                           LineHeight="24"/>
+            </Border>
+        </StackPanel>
+
+        <Border x:Name="QrCodeCard"
+                Background="#FAFAF8"
+                CornerRadius="4"
+                Padding="12"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,36,36"
+                Panel.ZIndex="20">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="4" Opacity="0.28" Direction="270"/>
+            </Border.Effect>
+            <StackPanel>
+                <Image x:Name="QrCodeImage"
+                       Width="140"
+                       Height="140"
+                       Stretch="Uniform"
+                       SnapsToDevicePixels="True"/>
+                <TextBlock Text="Scan to learn more"
+                           FontSize="13"
+                           Foreground="#666"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
