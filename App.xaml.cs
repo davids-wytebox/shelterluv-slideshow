@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Forms;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Application = System.Windows.Application;
 using ShelterPetViewer.Models;
 using ShelterPetViewer.Services;
@@ -80,6 +81,9 @@ public partial class App : Application
         if (_fullscreenWindows.Count == 0 || _slideshowSession is null)
             return;
 
+        if (_trayIcon?.ContextMenuStrip?.Visible == true)
+            return;
+
         if (e.StagingItem.Input.RoutedEvent != Keyboard.KeyDownEvent)
             return;
 
@@ -89,10 +93,17 @@ public partial class App : Application
         switch (keyArgs.Key)
         {
             case Key.Escape:
+                e.StagingItem.Input.Handled = true;
+                Dispatcher.BeginInvoke(CloseAllFullscreen, DispatcherPriority.Input);
+                break;
             case Key.Left:
+                _slideshowSession.ShowPrevious();
+                _slideshowSession.ResetAutoTimer();
+                e.StagingItem.Input.Handled = true;
+                break;
             case Key.Right:
-                foreach (var window in _fullscreenWindows)
-                    window.HandleSlideshowKey(keyArgs.Key);
+                _slideshowSession.ShowNext();
+                _slideshowSession.ResetAutoTimer();
                 e.StagingItem.Input.Handled = true;
                 break;
         }
@@ -261,7 +272,7 @@ public partial class App : Application
     {
         if (_fullscreenWindows.Count > 0)
         {
-            foreach (var window in _fullscreenWindows)
+            foreach (var window in _fullscreenWindows.ToList())
                 window.Activate();
             return;
         }
@@ -328,6 +339,8 @@ public partial class App : Application
     {
         if (_fullscreenWindows.Count == 0)
             return;
+
+        _trayIcon?.ContextMenuStrip?.Close();
 
         _closingAll = true;
         _slideshowSession?.Stop();

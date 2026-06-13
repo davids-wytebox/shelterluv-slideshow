@@ -38,6 +38,6 @@ public sealed class SettingsService
     public void Save(AppSettings settings)
     {
         var json = JsonSerializer.Serialize(settings, JsonOptions);
-        AtomicFileHelper.WriteAllTextAsync(_settingsPath, json).GetAwaiter().GetResult();
+        AtomicFileHelper.WriteAllText(_settingsPath, json);
     }
 }
