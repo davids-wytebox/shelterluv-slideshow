@@ -10,6 +10,7 @@
     <AssemblyName>ShelterPetViewer</AssemblyName>
     <RootNamespace>ShelterPetViewer</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>1.1.0</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -22,11 +23,6 @@
 
   <ItemGroup>
     <PackageReference Include="QRCoder" Version="1.6.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Resource Include="Assets\Fonts\Nunito-Bold.ttf" />
-    <None Include="Assets\Fonts\OFL.txt" />
   </ItemGroup>
 
   <ItemGroup>

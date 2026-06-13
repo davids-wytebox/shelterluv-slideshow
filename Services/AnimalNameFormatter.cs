@@ -22,25 +22,6 @@ public static class AnimalNameFormatter
         return (displayName, animalId, note);
     }
 
-    public static string FormatCardText(string? animalId, string? note, string description)
-    {
-        var headerParts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(animalId))
-            headerParts.Add(animalId);
-        if (!string.IsNullOrWhiteSpace(note))
-            headerParts.Add($"({note})");
-
-        var header = string.Join(" ", headerParts);
-        var body = DescriptionFormatter.Normalize(description);
-
-        if (string.IsNullOrWhiteSpace(header))
-            return body;
-        if (string.IsNullOrWhiteSpace(body))
-            return header;
-
-        return $"{header}{Environment.NewLine}{body}";
-    }
-
     private static string CleanDisplayName(string value) =>
         value.Trim().TrimEnd('*').Trim();
 

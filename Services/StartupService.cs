@@ -19,7 +19,16 @@ public static class StartupService
             ?? Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true);
 
         if (enabled)
-            key.SetValue(AppName, $"\"{Environment.ProcessPath}\"");
+        {
+            var path = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                LogService.Error("Cannot enable startup: process path is unavailable.");
+                return;
+            }
+
+            key.SetValue(AppName, $"\"{path}\"");
+        }
         else
             key.DeleteValue(AppName, throwOnMissingValue: false);
     }

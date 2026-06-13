@@ -28,8 +28,9 @@ public sealed class SettingsService
             var json = File.ReadAllText(_settingsPath);
             return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
         }
-        catch
+        catch (Exception ex)
         {
+            LogService.Error("Failed to load settings; using defaults.", ex);
             return new AppSettings();
         }
     }
@@ -37,6 +38,6 @@ public sealed class SettingsService
     public void Save(AppSettings settings)
     {
         var json = JsonSerializer.Serialize(settings, JsonOptions);
-        File.WriteAllText(_settingsPath, json);
+        AtomicFileHelper.WriteAllTextAsync(_settingsPath, json).GetAwaiter().GetResult();
     }
 }

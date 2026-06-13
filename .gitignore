@@ -6,3 +6,7 @@ publish/
 *.suo
 *.cache
 _deser_test.csx
+tools/**/bin/
+tools/**/obj/
+Thumbs.db
+Desktop.ini

@@ -5,22 +5,25 @@ namespace ShelterPetViewer.Services;
 
 public sealed class SlideshowSession : IDisposable
 {
-    private readonly IReadOnlyList<CachedAnimal> _animals;
+    private readonly List<CachedAnimal> _animals;
     private readonly int _historySize;
     private readonly Random _random = new();
     private readonly List<int> _history = new();
     private readonly DispatcherTimer _autoTimer;
+    private EventHandler? _timerTickHandler;
     private int _historyPosition = -1;
     private int _currentIndex = -1;
+    private bool _disposed;
 
     public event Action<CachedAnimal?>? AnimalChanged;
 
     public SlideshowSession(IReadOnlyList<CachedAnimal> animals, int autoAdvanceSeconds, int historySize)
     {
-        _animals = animals;
+        _animals = animals.ToList();
         _historySize = historySize;
         _autoTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(autoAdvanceSeconds) };
-        _autoTimer.Tick += (_, _) => ShowRandomNext();
+        _timerTickHandler = (_, _) => ShowRandomNext();
+        _autoTimer.Tick += _timerTickHandler;
     }
 
     public void Start()
@@ -30,6 +33,19 @@ public sealed class SlideshowSession : IDisposable
     }
 
     public void Stop() => _autoTimer.Stop();
+
+    public void ReloadAnimals(IReadOnlyList<CachedAnimal> animals)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        _animals.Clear();
+        _animals.AddRange(animals);
+        _history.Clear();
+        _historyPosition = -1;
+        _currentIndex = -1;
+        ShowRandomNext();
+        ResetAutoTimer();
+    }
 
     public void ShowNext()
     {
@@ -90,7 +106,14 @@ public sealed class SlideshowSession : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+            return;
+
+        _disposed = true;
         _autoTimer.Stop();
+        if (_timerTickHandler is not null)
+            _autoTimer.Tick -= _timerTickHandler;
+        AnimalChanged = null;
     }
 
     private bool CanGoBack() => _historyPosition > 0;

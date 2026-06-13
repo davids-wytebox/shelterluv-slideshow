@@ -5,6 +5,8 @@ namespace ShelterPetViewer.Services;
 
 public static class LogService
 {
+    private const long MaxLogBytes = 512 * 1024;
+
     private static readonly object Lock = new();
     private static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -32,8 +34,25 @@ public static class LogService
         lock (Lock)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+            RotateIfNeeded();
             var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{level}] {message}{Environment.NewLine}";
             File.AppendAllText(LogPath, line);
         }
+    }
+
+    private static void RotateIfNeeded()
+    {
+        if (!File.Exists(LogPath))
+            return;
+
+        var info = new FileInfo(LogPath);
+        if (info.Length <= MaxLogBytes)
+            return;
+
+        var backupPath = Path.Combine(info.DirectoryName!, "log.old.txt");
+        if (File.Exists(backupPath))
+            File.Delete(backupPath);
+
+        File.Move(LogPath, backupPath);
     }
 }

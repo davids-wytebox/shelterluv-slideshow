@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,10 +14,13 @@ namespace ShelterPetViewer;
 
 public partial class FullscreenWindow : Window
 {
+    private static readonly ConcurrentDictionary<string, (long WriteTimeUtcTicks, BitmapImage Image)> BitmapCache = new();
+
     private readonly SlideshowSession _session;
     private readonly Rect _screenBounds;
     private CachedAnimal? _currentAnimal;
-    private int _photoCount = 1;
+    private IReadOnlyList<BitmapImage>? _currentPhotos;
+    private int _renderGeneration;
 
     public event Action? CloseRequested;
 
@@ -43,8 +47,13 @@ public partial class FullscreenWindow : Window
 
     private void PhotoCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (_currentAnimal is not null && e.NewSize.Width > 0 && e.NewSize.Height > 0)
-            RenderAnimal(_currentAnimal);
+        if (_currentPhotos is null || _currentPhotos.Count == 0 || _currentAnimal is null)
+            return;
+
+        if (e.NewSize.Width <= 0 || e.NewSize.Height <= 0)
+            return;
+
+        LayoutPhotos(_currentPhotos, _currentAnimal);
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -57,9 +66,9 @@ public partial class FullscreenWindow : Window
         _session.AnimalChanged -= OnAnimalChanged;
     }
 
-    private void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    public void HandleSlideshowKey(Key key)
     {
-        switch (e.Key)
+        switch (key)
         {
             case Key.Escape:
                 CloseRequested?.Invoke();
@@ -75,25 +84,61 @@ public partial class FullscreenWindow : Window
         }
     }
 
+    private void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) => HandleSlideshowKey(e.Key);
+
     private void OnAnimalChanged(CachedAnimal? animal)
     {
         if (animal is null)
         {
+            Interlocked.Increment(ref _renderGeneration);
             SetDisplayName("No cached animals");
             BioText.Text = "Use the tray icon to update the cache while online.";
             BioCard.Visibility = Visibility.Visible;
             QrCodeCard.Visibility = Visibility.Collapsed;
             PhotoCanvas.Children.Clear();
             _currentAnimal = null;
+            _currentPhotos = null;
             return;
         }
 
-        RenderAnimal(animal);
+        _ = RenderAnimalAsync(animal);
     }
 
-    private void RenderAnimal(CachedAnimal animal)
+    private async Task RenderAnimalAsync(CachedAnimal animal)
     {
+        var generation = Interlocked.Increment(ref _renderGeneration);
+        UpdateAnimalChrome(animal);
+
+        var paths = animal.PhotoPaths
+            .Where(File.Exists)
+            .Take(5)
+            .ToList();
+
+        var qrTask = UpdateQrCodeAsync(animal.Id, generation);
+        var photos = await Task.Run(() =>
+            paths
+                .Select(LoadBitmapCached)
+                .Where(image => image is not null)
+                .Cast<BitmapImage>()
+                .ToList());
+
+        await qrTask;
+
+        if (generation != Volatile.Read(ref _renderGeneration))
+            return;
+
         _currentAnimal = animal;
+        _currentPhotos = photos;
+        PhotoCanvas.Children.Clear();
+
+        if (photos.Count == 0)
+            return;
+
+        LayoutPhotos(photos, animal);
+    }
+
+    private void UpdateAnimalChrome(CachedAnimal animal)
+    {
         var (displayName, _, _) = AnimalNameFormatter.Parse(animal.Name);
         SetDisplayName(displayName);
         var bioText = AnimalBioFormatter.FormatCardText(animal);
@@ -101,26 +146,25 @@ public partial class FullscreenWindow : Window
         BioCard.Visibility = string.IsNullOrWhiteSpace(bioText)
             ? Visibility.Collapsed
             : Visibility.Visible;
-        UpdateQrCode(animal.Id);
+    }
+
+    private async Task UpdateQrCodeAsync(string uniqueId, int generation)
+    {
+        var url = QrCodeService.GetAnimalUrl(uniqueId);
+        var qrCode = await Task.Run(() => QrCodeService.CreateQrCode(url));
+
+        if (generation != Volatile.Read(ref _renderGeneration))
+            return;
+
+        QrCodeImage.Source = qrCode;
+        QrCodeCard.Visibility = Visibility.Visible;
+    }
+
+    private void LayoutPhotos(IReadOnlyList<BitmapImage> photos, CachedAnimal animal)
+    {
         PhotoCanvas.Children.Clear();
 
-        var photos = animal.PhotoPaths
-            .Where(File.Exists)
-            .Take(5)
-            .Select(LoadBitmap)
-            .Where(image => image is not null)
-            .Cast<BitmapImage>()
-            .ToList();
-
-        if (photos.Count == 0)
-        {
-            _photoCount = 1;
-            return;
-        }
-
-        _photoCount = photos.Count;
         var layoutRandom = new Random(animal.Id.GetHashCode(StringComparison.OrdinalIgnoreCase));
-
         if (photos.Count == 1)
             LayoutSinglePhoto(photos[0]);
         else
@@ -281,17 +325,10 @@ public partial class FullscreenWindow : Window
         return (width, height);
     }
 
-    private void UpdateQrCode(string uniqueId)
-    {
-        var url = QrCodeService.GetAnimalUrl(uniqueId);
-        QrCodeImage.Source = QrCodeService.CreateQrCode(url);
-        QrCodeCard.Visibility = Visibility.Visible;
-    }
-
     private void SetDisplayName(string displayName)
     {
-        NameText.Text = AnimalNameFormatter.ToTitleCase(displayName);
-        NameText.FontSize = displayName.Length switch
+        var titleCaseName = AnimalNameFormatter.ToTitleCase(displayName);
+        var fontSize = displayName.Length switch
         {
             <= 6 => 98,
             <= 10 => 86,
@@ -299,23 +336,41 @@ public partial class FullscreenWindow : Window
             <= 18 => 64,
             _ => 56
         };
+
+        foreach (var outline in new[] { NameOutlineNorth, NameOutlineSouth, NameOutlineEast, NameOutlineWest })
+        {
+            outline.Text = titleCaseName;
+            outline.FontSize = fontSize;
+        }
+
+        NameText.Text = titleCaseName;
+        NameText.FontSize = fontSize;
     }
 
-    private static BitmapImage? LoadBitmap(string path)
+    private static BitmapImage? LoadBitmapCached(string path)
     {
         try
         {
+            var writeTime = File.GetLastWriteTimeUtc(path).Ticks;
+            if (BitmapCache.TryGetValue(path, out var cached) && cached.WriteTimeUtcTicks == writeTime)
+                return cached.Image;
+
             var bitmap = new BitmapImage();
             bitmap.BeginInit();
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
             bitmap.UriSource = new Uri(path, UriKind.Absolute);
             bitmap.EndInit();
             bitmap.Freeze();
+
+            BitmapCache[path] = (writeTime, bitmap);
             return bitmap;
         }
-        catch
+        catch (Exception ex)
         {
+            LogService.Error($"Failed loading image {path}", ex);
             return null;
         }
     }
+
+    public static void ClearBitmapCache() => BitmapCache.Clear();
 }

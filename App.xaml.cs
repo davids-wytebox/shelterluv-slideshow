@@ -1,8 +1,11 @@
 ﻿using System.Drawing;
 using System.IO;
 using System.Net.Http;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Forms;
+using System.Windows.Input;
 using Application = System.Windows.Application;
 using ShelterPetViewer.Models;
 using ShelterPetViewer.Services;
@@ -20,7 +23,9 @@ public partial class App : Application
     private SettingsService _settingsService = new();
     private CacheService _cacheService = null!;
     private HttpClient _httpClient = null!;
-    private bool _isSyncing;
+    private CancellationTokenSource? _syncCancellation;
+    private int _syncing;
+    private bool _closingAll;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -33,8 +38,14 @@ public partial class App : Application
         DispatcherUnhandledException += (_, args) =>
         {
             LogService.Error("UI thread exception", args.Exception);
-            args.Handled = true;
+            if (_fullscreenWindows.Count > 0)
+            {
+                CloseAllFullscreen();
+                args.Handled = true;
+            }
         };
+
+        InputManager.Current.PreProcessInput += OnPreProcessInput;
 
         _settings = _settingsService.Load();
         NormalizeSettings();
@@ -45,7 +56,8 @@ public partial class App : Application
         {
             Timeout = TimeSpan.FromMinutes(5)
         };
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("ShelterPetViewer/1.0");
+        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"ShelterPetViewer/{version}");
 
         var shelterService = new ShelterLuvService(_httpClient);
         _cacheService = new CacheService(shelterService, _httpClient);
@@ -60,6 +72,29 @@ public partial class App : Application
                 "Shelter Pet Viewer",
                 "No cached animals yet. Right-click the tray icon and choose Update Cache while online.",
                 ToolTipIcon.Info);
+        }
+    }
+
+    private void OnPreProcessInput(object sender, PreProcessInputEventArgs e)
+    {
+        if (_fullscreenWindows.Count == 0 || _slideshowSession is null)
+            return;
+
+        if (e.StagingItem.Input.RoutedEvent != Keyboard.KeyDownEvent)
+            return;
+
+        if (e.StagingItem.Input is not System.Windows.Input.KeyEventArgs keyArgs)
+            return;
+
+        switch (keyArgs.Key)
+        {
+            case Key.Escape:
+            case Key.Left:
+            case Key.Right:
+                foreach (var window in _fullscreenWindows)
+                    window.HandleSlideshowKey(keyArgs.Key);
+                e.StagingItem.Input.Handled = true;
+                break;
         }
     }
 
@@ -110,17 +145,17 @@ public partial class App : Application
         menu.Items.Add(modeMenu);
 
         var displayMenu = new ToolStripMenuItem("Display On");
-        var secondaryItem = new ToolStripMenuItem("Secondary screen (work on primary)")
+        var secondaryItem = new ToolStripMenuItem(DisplayService.DescribeTarget(DisplayTarget.SecondaryScreen))
         {
             Checked = _settings.DisplayTarget == DisplayTarget.SecondaryScreen,
             CheckOnClick = true
         };
-        var primaryItem = new ToolStripMenuItem("Primary screen only")
+        var primaryItem = new ToolStripMenuItem(DisplayService.DescribeTarget(DisplayTarget.PrimaryScreen))
         {
             Checked = _settings.DisplayTarget == DisplayTarget.PrimaryScreen,
             CheckOnClick = true
         };
-        var allScreensItem = new ToolStripMenuItem("All screens")
+        var allScreensItem = new ToolStripMenuItem(DisplayService.DescribeTarget(DisplayTarget.AllScreens))
         {
             Checked = _settings.DisplayTarget == DisplayTarget.AllScreens,
             CheckOnClick = true
@@ -226,7 +261,8 @@ public partial class App : Application
     {
         if (_fullscreenWindows.Count > 0)
         {
-            _fullscreenWindows[0].Activate();
+            foreach (var window in _fullscreenWindows)
+                window.Activate();
             return;
         }
 
@@ -258,8 +294,22 @@ public partial class App : Application
         LogService.Info($"Started fullscreen on {screens.Count} screen(s) using {_settings.DisplayTarget}.");
     }
 
+    private void ReloadSlideshowIfOpen()
+    {
+        if (_slideshowSession is null || _fullscreenWindows.Count == 0)
+            return;
+
+        FullscreenWindow.ClearBitmapCache();
+        var animals = _cacheService.LoadCachedAnimals(_settings.Mode);
+        _slideshowSession.ReloadAnimals(animals);
+        LogService.Info($"Reloaded slideshow with {animals.Count} cached {_settings.Mode} animals.");
+    }
+
     private void OnFullscreenWindowClosed(object? sender, EventArgs e)
     {
+        if (_closingAll)
+            return;
+
         if (sender is not FullscreenWindow window)
             return;
 
@@ -279,7 +329,9 @@ public partial class App : Application
         if (_fullscreenWindows.Count == 0)
             return;
 
+        _closingAll = true;
         _slideshowSession?.Stop();
+
         var windows = _fullscreenWindows.ToList();
         _fullscreenWindows.Clear();
 
@@ -292,33 +344,46 @@ public partial class App : Application
 
         _slideshowSession?.Dispose();
         _slideshowSession = null;
+        _closingAll = false;
     }
 
     private async Task UpdateCacheAsync()
     {
-        if (_isSyncing)
+        if (Interlocked.CompareExchange(ref _syncing, 1, 0) != 0)
             return;
 
-        _isSyncing = true;
+        _syncCancellation = new CancellationTokenSource();
         try
         {
             LogService.Info("Starting cache update for adoption and foster.");
             _trayIcon!.Text = "Updating cache...";
-            var (adoption, foster) = await _cacheService.SyncAllAsync(new Progress<string>(UpdateTrayText));
+            var (adoption, foster) = await _cacheService.SyncAllAsync(
+                new Progress<string>(UpdateTrayText),
+                _syncCancellation.Token);
+
             var added = adoption.Added + foster.Added;
             var updated = adoption.Updated + foster.Updated;
             var removed = adoption.Removed + foster.Removed;
+            var skipped = adoption.Skipped + foster.Skipped;
             var total = adoption.Total + foster.Total;
+
             LogService.Info(
                 $"Cache update finished: {total} total " +
                 $"(adoption {adoption.Total}, foster {foster.Total}), " +
-                $"{added} added, {updated} updated, {removed} removed.");
+                $"{added} added, {updated} updated, {removed} removed, {skipped} skipped.");
+
+            ReloadSlideshowIfOpen();
+
             _trayIcon.ShowBalloonTip(
                 4000,
                 "Cache Updated",
                 $"{total} animals cached ({adoption.Total} adoption, {foster.Total} foster). " +
                 $"{added} new, {updated} updated, {removed} removed.",
                 ToolTipIcon.Info);
+        }
+        catch (OperationCanceledException)
+        {
+            LogService.Info("Cache update cancelled.");
         }
         catch (Exception ex)
         {
@@ -331,7 +396,9 @@ public partial class App : Application
         }
         finally
         {
-            _isSyncing = false;
+            Interlocked.Exchange(ref _syncing, 0);
+            _syncCancellation?.Dispose();
+            _syncCancellation = null;
             _trayIcon!.Text = "Shelter Pet Viewer";
         }
     }
@@ -362,6 +429,8 @@ public partial class App : Application
 
     private void ExitApp()
     {
+        _syncCancellation?.Cancel();
+        InputManager.Current.PreProcessInput -= OnPreProcessInput;
         CloseAllFullscreen();
 
         if (_trayIcon is not null)
@@ -383,6 +452,19 @@ public partial class App : Application
         graphics.FillEllipse(brush, 8, 8, 16, 16);
         graphics.FillEllipse(brush, 4, 4, 7, 7);
         graphics.FillEllipse(brush, 21, 4, 7, 7);
-        return Icon.FromHandle(bitmap.GetHicon());
+
+        var handle = bitmap.GetHicon();
+        try
+        {
+            using var tempIcon = Icon.FromHandle(handle);
+            return (Icon)tempIcon.Clone();
+        }
+        finally
+        {
+            DestroyIcon(handle);
+        }
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool DestroyIcon(IntPtr handle);
 }

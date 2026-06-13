@@ -94,6 +94,7 @@ public sealed class ShelterAnimalDetail
     public string Sex { get; set; } = "";
 
     [JsonPropertyName("weight")]
+    [JsonConverter(typeof(FlexibleNullableDoubleConverter))]
     public double? Weight { get; set; }
 
     [JsonPropertyName("weight_units")]

@@ -102,21 +102,4 @@ public sealed class ShelterLuvService(HttpClient httpClient)
                name.Contains("template") ||
                name.Contains("adoption fee");
     }
-
-    public static string BuildFallbackDescription(ShelterAnimalSummary animal)
-    {
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(animal.Species))
-            parts.Add(animal.Species);
-        if (!string.IsNullOrWhiteSpace(animal.Breed))
-            parts.Add(animal.Breed);
-        if (!string.IsNullOrWhiteSpace(animal.Sex))
-            parts.Add(animal.Sex);
-        if (!string.IsNullOrWhiteSpace(animal.AgeGroup?.NameWithDuration))
-            parts.Add(animal.AgeGroup.NameWithDuration);
-        if (animal.Attributes.Count > 0)
-            parts.Add(string.Join(" · ", animal.Attributes));
-
-        return string.Join(" · ", parts);
-    }
 }
