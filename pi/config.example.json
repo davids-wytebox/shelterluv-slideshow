@@ -1,0 +1,11 @@
+{
+  "gpio": {
+    "forward": 17,
+    "back": 27,
+    "menu": 22,
+    "return": 23
+  },
+  "sync_interval_hours": 2,
+  "fullscreen": true,
+  "hide_cursor": true
+}

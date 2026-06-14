@@ -1,43 +1,77 @@
 # Shelter Pet Viewer
 
-A small Windows tray app that downloads adoptable and foster animals from ShelterLuv and displays them fullscreen for adoption events — works fully offline from a local cache.
+A kiosk slideshow for adoption events — downloads adoptable and foster animals from ShelterLuv and displays them fullscreen from a local cache.
 
-## Build
+Two platforms share the **same cache format**:
+
+| Platform | Location | Use case |
+|----------|----------|----------|
+| **Windows** | `ShelterPetViewer/` (.NET 8 WPF) | PC with tray app, multi-monitor, keyboard |
+| **Raspberry Pi** | `pi/` (Python + pygame) | Dedicated kiosk with GPIO buttons, autostart |
+
+---
+
+## Windows
+
+### Build
 
 ```powershell
 cd ShelterPetViewer
 dotnet publish -c Release
 ```
 
-The single-file executable is at `bin\Release\net8.0-windows\win-x64\publish\ShelterPetViewer.exe`
+Output: `bin\Release\net8.0-windows\win-x64\publish\ShelterPetViewer.exe`
 
-## First run
+### First run
 
 1. Run `ShelterPetViewer.exe` — it starts in the system tray.
-2. Right-click the tray icon → **Update Cache** (requires internet). This downloads both adoption and foster animals.
-3. Right-click → **Show Fullscreen** to start the slideshow.
+2. Right-click → **Update Cache** (requires internet).
+3. Right-click → **Show Fullscreen**.
 
-## Tray menu
+### Controls
 
-- **Animal Set** — Adoption or Foster slideshow
-- **Display On** — Primary, secondary, or all monitors
-- **Slide Interval** — 10, 15, 20, 30, 45 (default), or 60 seconds
-- **Start with Windows** — launch at login
-
-## Controls
-
-- **←** Previous animal (20-item history)
-- **→** Forward in history when available, otherwise random next
+- **← / →** Previous / next animal
 - **Esc** Exit fullscreen
-- Keyboard works from any monitor while fullscreen is open
 
-## Data locations
+### Tray menu
 
-- Cache: `%AppData%\ShelterPetViewer\cache\adoption\` and `\foster\`
+Animal set, display target, slide interval (10–60s), start with Windows, update cache.
+
+### Data locations
+
+- Cache: `%AppData%\ShelterPetViewer\cache\`
 - Settings: `%AppData%\ShelterPetViewer\settings.json`
 - Log: `%AppData%\ShelterPetViewer\log.txt`
 
-## Notes
+---
 
-- An open slideshow reloads automatically after **Update Cache** completes.
-- Close the app from the tray before publishing a new build (the exe cannot be overwritten while running).
+## Raspberry Pi
+
+See **[pi/README.md](pi/README.md)** for full setup: GPIO wiring, autostart, systemd service, and button controls.
+
+Quick start on the Pi:
+
+```bash
+cd pi
+./setup.sh
+source .venv/bin/activate
+python -m shelter_pet_viewer
+```
+
+**Buttons:** Forward/Back navigate slides (or menu up/down). Menu opens options. Return goes back one level.
+
+Syncs on startup and every 2 hours when online.
+
+---
+
+## Shared cache
+
+Both apps read/write the same structure:
+
+```
+cache/
+  adoption/{animalId}/info.txt, photos.json, 1.jpg ...
+  foster/{animalId}/...
+```
+
+You can sync on Windows and copy the cache to the Pi, or let the Pi sync directly.

@@ -10,3 +10,7 @@ tools/**/bin/
 tools/**/obj/
 Thumbs.db
 Desktop.ini
+pi/.venv/
+pi/config.json
+pi/**/__pycache__/
+pi/**/*.pyc

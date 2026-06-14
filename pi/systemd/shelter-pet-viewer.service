@@ -1,0 +1,17 @@
+[Unit]
+Description=Shelter Pet Viewer kiosk slideshow
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/shelterluv-slideshow/pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+ExecStart=/home/pi/shelterluv-slideshow/pi/.venv/bin/python -m shelter_pet_viewer
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
