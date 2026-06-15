@@ -1,0 +1,17 @@
+[Unit]
+Description=Shelter Pet Viewer kiosk slideshow (KMS / no desktop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/shelterluv-slideshow/pi
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=SDL_AUDIODRIVER=dummy
+ExecStart=/home/pi/shelterluv-slideshow/pi/.venv/bin/python -m shelter_pet_viewer
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

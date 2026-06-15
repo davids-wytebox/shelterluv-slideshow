@@ -60,7 +60,7 @@ python -m shelter_pet_viewer
 
 **Buttons:** Forward/Back navigate slides (or menu up/down). Menu opens options. Return goes back one level.
 
-Syncs on startup and every 2 hours when online.
+Syncs on startup and every 2 hours when online. Also runs on **Pi Zero 2 W** — see [pi/README.md](pi/README.md#raspberry-pi-zero-2-w).
 
 ---
 

@@ -1,6 +1,6 @@
 # Shelter Pet Viewer — Raspberry Pi Kiosk
 
-Fullscreen adoption slideshow for Raspberry Pi 4 running **Raspberry Pi OS** (Bookworm or later). Uses the same cache format as the Windows app, so you can sync on either platform.
+Fullscreen adoption slideshow for **Raspberry Pi 4** or **Pi Zero 2 W**, running **Raspberry Pi OS** (Bookworm or later). Uses the same cache format as the Windows app, so you can sync on either platform.
 
 ## What you get
 
@@ -94,6 +94,78 @@ python -m shelter_pet_viewer
 ```
 
 First launch syncs the cache in the background. Press **Menu** to change settings. Ctrl+Q exits.
+
+## Raspberry Pi Zero 2 W
+
+The same `pi/` app runs on a **Pi Zero 2 W** with no code changes — same clone, wiring, GPIO pins, and systemd steps as above. The Zero 2 is a viable low-cost kiosk option if you plan around its limits.
+
+### What is the same
+
+| Item | Notes |
+|------|-------|
+| Software | Identical setup (`./setup.sh`, systemd service, `config.json`) |
+| GPIO buttons | Same BCM pin numbers on the 40-pin header |
+| Cache format | Same as Windows and Pi 4 |
+| WiFi sync | **Zero 2 W** only — the non-W Zero has no WiFi |
+| Display | Mini HDMI → full-size HDMI adapter → monitor or TV |
+
+### What is different
+
+| Item | Pi 4 | Pi Zero 2 W |
+|------|------|-------------|
+| CPU | ~1.5 GHz quad-core | ~1 GHz quad-core (Pi 3 class) |
+| RAM | 1–8 GB | **512 MB** |
+| Photo transitions | Fast | Slower (1–3 s is normal) |
+| First cache sync | Fine | Can take longer; pre-sync from PC helps |
+
+### Hardware tips
+
+- **Power:** Use a reliable **2.5 A** supply. Undervoltage causes freezes that look like software bugs.
+- **Storage:** 32 GB+ microSD recommended; cache grows over time.
+- **GPIO header:** Many Zero 2 boards ship without pins soldered — you may need to add a header for buttons.
+- **Resolution:** 1080p is a safe default; 4K works but is heavier on the Zero 2.
+
+### Recommended Zero 2 workflow
+
+1. Follow the **One-time Pi setup** and **Autostart** sections above (desktop autologin is the easiest path).
+2. **Pre-seed the cache** from Windows before the event, if possible — sync on the PC, then copy:
+
+   ```bash
+   rsync -av "/path/to/ShelterPetViewer/cache/" \
+     ~/.local/share/ShelterPetViewer/cache/
+   ```
+
+   On Windows the cache is at `%AppData%\ShelterPetViewer\cache\`.
+3. On first boot without a pre-seeded cache, the slideshow may show “No cached animals” until the background sync finishes. Give it time or use **Menu → Update Cache Now** once online.
+4. Use a slide interval of **30–45 seconds** or longer so slower photo loading is less noticeable.
+
+### Optional: lighter boot (save RAM)
+
+The default setup runs under the desktop (X11, `DISPLAY=:0`), which uses a meaningful chunk of the Zero 2’s 512 MB. If the slideshow feels sluggish or the Pi runs out of memory, you can run fullscreen **without the desktop** using pygame’s KMS driver.
+
+An alternate systemd unit is included:
+
+```bash
+sudo cp ~/shelterluv-slideshow/pi/systemd/shelter-pet-viewer-kms.service /etc/systemd/system/
+sudo systemctl disable shelter-pet-viewer.service   # if the desktop unit was enabled
+sudo systemctl daemon-reload
+sudo systemctl enable shelter-pet-viewer-kms.service
+sudo systemctl start shelter-pet-viewer-kms.service
+```
+
+This unit sets `SDL_VIDEODRIVER=kmsdrm` and does not require X11. It is optional and slightly more fiddly than desktop autologin — try the standard path first, and switch to KMS only if you need the extra headroom.
+
+> **Note:** KMS mode boots directly to the slideshow on the framebuffer. You lose the desktop environment while the service is running.
+
+### Zero 2 expectations
+
+| Scenario | Zero 2 W |
+|----------|----------|
+| Slideshow with cached photos | Good |
+| GPIO menu and buttons | Good |
+| Background sync every 2 hours | Good (WiFi) |
+| Fast photo transitions | Acceptable, not instant |
+| Large first-time sync (100+ animals) | Slow — pre-sync from PC recommended |
 
 ## Autostart on boot (fullscreen kiosk)
 
@@ -192,6 +264,9 @@ rsync -av "/mnt/windows/Users/YourName/AppData/Roaming/ShelterPetViewer/cache/" 
 | No animals shown | Wait for first sync or run manual update; check log file |
 | pygame won't start | Run from desktop session (needs `DISPLAY=:0`), not SSH without X |
 | GPIO "permission denied" | `sudo usermod -aG gpio $USER` and re-login |
+| Zero 2 sluggish or OOM | Pre-sync cache from PC; try `shelter-pet-viewer-kms.service`; use 1080p display |
+| Zero 2 freezes or lightning bolt icon | Weak power supply — use 2.5 A adapter and a short cable |
+| Zero 2 black screen with KMS service | Check `journalctl -u shelter-pet-viewer-kms`; confirm user is in `video` and `render` groups |
 
 ## Development on Windows
 
