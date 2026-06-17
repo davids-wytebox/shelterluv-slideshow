@@ -156,14 +156,23 @@ class KioskDisplay:
             max(1, int(photo.get_height() * scale)),
         )
         scaled = pygame.transform.smoothscale(photo, target)
-        rotated = pygame.transform.rotate(scaled, rotation)
+
+        padding = 12
+        border = 2
+        frame_w = target[0] + padding * 2 + border * 2
+        frame_h = target[1] + padding * 2 + border * 2
+        framed = pygame.Surface((frame_w, frame_h), pygame.SRCALPHA)
+        framed.fill((30, 30, 30))
+        inner = pygame.Surface((frame_w - border * 2, frame_h - border * 2), pygame.SRCALPHA)
+        inner.fill(WHITE)
+        inner.blit(scaled, (padding, padding))
+        framed.blit(inner, (border, border))
+
+        rotated = pygame.transform.rotate(framed, rotation)
         rect = rotated.get_rect(
             center=(int(placement.center_x * self.width), int(placement.center_y * self.height))
         )
-        frame = pygame.Surface((rect.width + 24, rect.height + 24), pygame.SRCALPHA)
-        frame.fill(WHITE)
-        frame.blit(rotated, (12, 12))
-        self.screen.blit(frame, (rect.x - 12, rect.y - 12))
+        self.screen.blit(rotated, rect)
 
     def _name_y(self) -> int:
         return max(120, int(self.height * 0.10))
