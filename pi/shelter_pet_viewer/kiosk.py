@@ -141,8 +141,6 @@ class KioskDisplay:
 
         if menu.visible:
             self._draw_menu(menu, sync_status)
-        else:
-            self._draw_hint_bar(sync_status)
 
         pygame.display.flip()
 
@@ -167,17 +165,21 @@ class KioskDisplay:
         frame.blit(rotated, (12, 12))
         self.screen.blit(frame, (rect.x - 12, rect.y - 12))
 
+    def _name_y(self) -> int:
+        return max(120, int(self.height * 0.10))
+
     def _draw_name(self) -> None:
         if not self._current_name:
             return
         font_size = 98 if len(self._current_name) <= 6 else 86 if len(self._current_name) <= 10 else 74
         font = pygame.font.SysFont("DejaVu Sans", font_size, bold=True)
+        name_y = self._name_y()
         for dx, dy in ((0, -2), (0, 2), (-2, 0), (2, 0)):
             outline = font.render(self._current_name, True, WHITE)
-            rect = outline.get_rect(center=(self.width // 2 + dx, 56 + dy))
+            rect = outline.get_rect(center=(self.width // 2 + dx, name_y + dy))
             self.screen.blit(outline, rect)
         text = font.render(self._current_name, True, NAVY)
-        rect = text.get_rect(center=(self.width // 2, 56))
+        rect = text.get_rect(center=(self.width // 2, name_y))
         self.screen.blit(text, rect)
 
     def _draw_bio_card(self) -> None:
@@ -198,7 +200,7 @@ class KioskDisplay:
     def _draw_qr(self) -> None:
         if self._current_qr is None:
             return
-        qr_size = 140
+        qr_size = 175
         scaled = pygame.transform.smoothscale(self._current_qr, (qr_size, qr_size))
         label = self.hint_font.render("Scan to learn more", True, TEXT_MUTED)
         card_w = qr_size + 24
@@ -214,14 +216,6 @@ class KioskDisplay:
         body = self.bio_font.render(self._current_bio, True, TEXT_MUTED)
         self.screen.blit(title, title.get_rect(center=(self.width // 2, self.height // 2 - 30)))
         self.screen.blit(body, body.get_rect(center=(self.width // 2, self.height // 2 + 30)))
-
-    def _draw_hint_bar(self, sync_status: str) -> None:
-        hint = "Back/Forward: navigate  |  Menu: options  |  Return: back"
-        text = self.hint_font.render(hint, True, (120, 120, 120))
-        self.screen.blit(text, (20, self.height - 28))
-        if sync_status:
-            status = self.hint_font.render(sync_status, True, (120, 120, 120))
-            self.screen.blit(status, (self.width - status.get_width() - 20, self.height - 28))
 
     def _draw_menu(self, menu: MenuState, sync_status: str) -> None:
         overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
