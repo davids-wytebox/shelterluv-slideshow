@@ -165,12 +165,12 @@ class KioskDisplay:
         padding = 12
         border = 2
         pil = Image.frombytes("RGB", photo.get_size(), pygame.image.tobytes(photo, "RGB"))
-        pil = pil.resize(target, Image.Resampling.LANCZOS)
+        pil = pil.resize(target, Image.Resampling.LANCZOS).convert("RGBA")
 
         frame_w = target[0] + padding * 2 + border * 2
         frame_h = target[1] + padding * 2 + border * 2
-        framed = Image.new("RGB", (frame_w, frame_h), (30, 30, 30))
-        inner = Image.new("RGB", (frame_w - border * 2, frame_h - border * 2), WHITE)
+        framed = Image.new("RGBA", (frame_w, frame_h), (30, 30, 30, 255))
+        inner = Image.new("RGBA", (frame_w - border * 2, frame_h - border * 2), (*WHITE, 255))
         inner.paste(pil, (padding, padding))
         framed.paste(inner, (border, border))
 
@@ -178,9 +178,9 @@ class KioskDisplay:
             rotation,
             resample=Image.Resampling.BICUBIC,
             expand=True,
-            fillcolor=(242, 242, 240),
+            fillcolor=(0, 0, 0, 0),
         )
-        return pygame.image.frombytes(rotated.tobytes(), rotated.size, "RGB")
+        return pygame.image.frombytes(rotated.tobytes(), rotated.size, "RGBA").convert_alpha()
 
     def _name_y(self) -> int:
         return max(120, int(self.height * 0.10))
