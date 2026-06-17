@@ -89,6 +89,21 @@ class SlideshowSession:
     def _can_go_forward(self) -> bool:
         return 0 <= self._history_position < len(self._history) - 1
 
+    def current_animal(self) -> CachedAnimal | None:
+        if self._current_index < 0 or self._current_index >= len(self._animals):
+            return None
+        return self._animals[self._current_index]
+
+    def peek_next(self) -> CachedAnimal | None:
+        if not self._can_go_forward():
+            return None
+        return self._animals[self._history[self._history_position + 1]]
+
+    def peek_previous(self) -> CachedAnimal | None:
+        if not self._can_go_back():
+            return None
+        return self._animals[self._history[self._history_position - 1]]
+
     def _show_at(self, index: int) -> None:
         self._current_index = index
         self.reset_timer()

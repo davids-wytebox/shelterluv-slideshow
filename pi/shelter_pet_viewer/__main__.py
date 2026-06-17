@@ -8,7 +8,7 @@ import pygame
 
 from .cache_loader import load_cached_animals
 from .gpio_buttons import ButtonInput
-from .kiosk import KioskDisplay
+from .kiosk import KioskDisplay, LAYOUT_READY_EVENT
 from .log_util import configure_logging
 from .menu import MenuController
 from .paths import app_data_dir, cache_root, pi_config_path
@@ -67,6 +67,17 @@ def main() -> int:
 
     session_holder: dict[str, SlideshowSession | None] = {"session": None}
 
+    def prefetch_neighbors() -> None:
+        session = session_holder["session"]
+        if session is None:
+            return
+        display.prefetch_animal(session.peek_next())
+        display.prefetch_animal(session.peek_previous())
+
+    def on_animal_changed(animal) -> None:
+        if display.show_animal(animal):
+            prefetch_neighbors()
+
     def reload_slideshow() -> None:
         animals = load_cached_animals(settings.mode, cache_root())
         display.clear_layout_cache()
@@ -76,7 +87,7 @@ def main() -> int:
                 animals,
                 settings.auto_advance_seconds,
                 settings.history_size,
-                on_change=display.show_animal,
+                on_change=on_animal_changed,
             )
             session_holder["session"].show_random_next()
         else:
@@ -139,6 +150,14 @@ def main() -> int:
                 running = False
             elif event.type == ACTION_EVENT:
                 process_action(event.action)
+            elif event.type == LAYOUT_READY_EVENT:
+                session = session_holder["session"]
+                if session is None:
+                    continue
+                current = session.current_animal()
+                if current is not None and current.id == event.animal_id:
+                    if display.try_apply_animal(current):
+                        prefetch_neighbors()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                     running = False
@@ -148,7 +167,7 @@ def main() -> int:
                         process_action(action)
 
         session = session_holder["session"]
-        if session is not None and not menu.state.visible:
+        if session is not None and not menu.state.visible and not display.is_loading():
             session.tick(delta)
 
         sync_status = scheduler.status.last_message

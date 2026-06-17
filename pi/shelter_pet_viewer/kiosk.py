@@ -16,6 +16,8 @@ from .menu import MenuController, MenuState
 
 log = logging.getLogger(__name__)
 
+LAYOUT_READY_EVENT = pygame.USEREVENT + 2
+
 BG_COLOR = (242, 242, 240)
 NAVY = (30, 58, 95)
 WHITE = (255, 255, 255)
@@ -79,13 +81,23 @@ class KioskDisplay:
         self._qr_cache: dict[str, pygame.Surface] = {}
         self._layout_cache: dict[str, list[tuple[pygame.Surface, PhotoPlacement]]] = {}
         self._layout_lock = threading.Lock()
+        self._display_target: CachedAnimal | None = None
+        self._prefetch_queue: list[CachedAnimal] = []
+        self._loader_lock = threading.Lock()
+        self._loader_notify = threading.Condition(self._loader_lock)
+        self._loader_stop = False
         self._current_surfaces: list[tuple[pygame.Surface, PhotoPlacement]] = []
         self._current_name = ""
         self._current_bio = ""
         self._current_qr: pygame.Surface | None = None
         self._empty_message: str | None = None
 
+        threading.Thread(target=self._loader_loop, name="layout-loader", daemon=True).start()
+
     def close(self) -> None:
+        self._loader_stop = True
+        with self._loader_notify:
+            self._loader_notify.notify_all()
         pygame.quit()
 
     def set_empty(self, message: str) -> None:
@@ -98,33 +110,104 @@ class KioskDisplay:
     def clear_layout_cache(self) -> None:
         with self._layout_lock:
             self._layout_cache.clear()
+        with self._loader_lock:
+            self._display_target = None
+            self._prefetch_queue.clear()
         self._photo_cache.clear()
 
     def prewarm_animals(self, animals: list[CachedAnimal]) -> None:
-        def run() -> None:
-            warmed = 0
-            for animal in animals:
-                if self._prewarm_animal(animal):
-                    warmed += 1
-            log.info("Prewarmed slide layouts for %d/%d animals.", warmed, len(animals))
+        for animal in animals:
+            self.prefetch_animal(animal)
 
-        threading.Thread(target=run, name="layout-prewarm", daemon=True).start()
+    def prefetch_animal(self, animal: CachedAnimal | None) -> None:
+        if animal is None:
+            return
+        if self._is_layout_cached(animal.id):
+            return
+        with self._loader_lock:
+            if self._display_target is not None and self._display_target.id == animal.id:
+                return
+            if any(item.id == animal.id for item in self._prefetch_queue):
+                return
+            self._prefetch_queue.append(animal)
+            self._loader_notify.notify()
 
-    def show_animal(self, animal: CachedAnimal | None) -> None:
+    def show_animal(self, animal: CachedAnimal | None) -> bool:
+        """Show animal immediately if cached, otherwise keep current slide and load in background."""
         if animal is None:
             self.set_empty("Use Update Cache in the menu while online.")
-            return
+            with self._loader_lock:
+                self._display_target = None
+            return True
 
-        cache_key = self._layout_key(animal.id)
-        with self._layout_lock:
-            surfaces = self._layout_cache.get(cache_key)
+        if self._is_layout_cached(animal.id):
+            surfaces = self._get_cached_layout(animal.id)
+            self._apply_animal(animal, surfaces)
+            with self._loader_lock:
+                if self._display_target is not None and self._display_target.id == animal.id:
+                    self._display_target = None
+            return True
 
-        if surfaces is None:
-            surfaces = self._build_surfaces(animal)
-            with self._layout_lock:
-                self._layout_cache[cache_key] = surfaces
+        with self._loader_lock:
+            self._display_target = animal
+            self._loader_notify.notify()
+        return False
 
+    def try_apply_animal(self, animal: CachedAnimal) -> bool:
+        if not self._is_layout_cached(animal.id):
+            return False
+        surfaces = self._get_cached_layout(animal.id)
         self._apply_animal(animal, surfaces)
+        with self._loader_lock:
+            if self._display_target is not None and self._display_target.id == animal.id:
+                self._display_target = None
+        return True
+
+    def is_loading(self) -> bool:
+        with self._loader_lock:
+            return self._display_target is not None
+
+    def _is_layout_cached(self, animal_id: str) -> bool:
+        with self._layout_lock:
+            return self._layout_key(animal_id) in self._layout_cache
+
+    def _get_cached_layout(self, animal_id: str) -> list[tuple[pygame.Surface, PhotoPlacement]]:
+        with self._layout_lock:
+            return self._layout_cache[self._layout_key(animal_id)]
+
+    def _loader_loop(self) -> None:
+        while not self._loader_stop:
+            with self._loader_lock:
+                while not self._loader_stop and self._display_target is None and not self._prefetch_queue:
+                    self._loader_notify.wait(timeout=0.5)
+                if self._loader_stop:
+                    return
+
+                if self._display_target is not None:
+                    animal = self._display_target
+                    for_display = True
+                else:
+                    animal = self._prefetch_queue.pop(0)
+                    for_display = False
+
+            if self._is_layout_cached(animal.id):
+                if for_display:
+                    self._post_layout_ready(animal.id)
+                continue
+
+            try:
+                self._prewarm_animal(animal)
+            except Exception:
+                log.exception("Failed building layout for %s", animal.id)
+                continue
+
+            if for_display:
+                with self._loader_lock:
+                    if self._display_target is not None and self._display_target.id == animal.id:
+                        self._post_layout_ready(animal.id)
+
+    def _post_layout_ready(self, animal_id: str) -> None:
+        pygame.event.post(pygame.event.Event(LAYOUT_READY_EVENT, animal_id=animal_id))
 
     def _layout_key(self, animal_id: str) -> str:
         return f"{animal_id}:{self.width}x{self.height}"
