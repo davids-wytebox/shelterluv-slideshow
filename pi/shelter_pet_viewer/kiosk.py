@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import random
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,6 +77,8 @@ class KioskDisplay:
 
         self._photo_cache: dict[str, pygame.Surface] = {}
         self._qr_cache: dict[str, pygame.Surface] = {}
+        self._layout_cache: dict[str, list[tuple[pygame.Surface, PhotoPlacement]]] = {}
+        self._layout_lock = threading.Lock()
         self._current_surfaces: list[tuple[pygame.Surface, PhotoPlacement]] = []
         self._current_name = ""
         self._current_bio = ""
@@ -92,25 +95,74 @@ class KioskDisplay:
         self._current_bio = message
         self._current_qr = None
 
+    def clear_layout_cache(self) -> None:
+        with self._layout_lock:
+            self._layout_cache.clear()
+        self._photo_cache.clear()
+
+    def prewarm_animals(self, animals: list[CachedAnimal]) -> None:
+        def run() -> None:
+            warmed = 0
+            for animal in animals:
+                if self._prewarm_animal(animal):
+                    warmed += 1
+            log.info("Prewarmed slide layouts for %d/%d animals.", warmed, len(animals))
+
+        threading.Thread(target=run, name="layout-prewarm", daemon=True).start()
+
     def show_animal(self, animal: CachedAnimal | None) -> None:
-        self._empty_message = None
         if animal is None:
             self.set_empty("Use Update Cache in the menu while online.")
             return
 
-        display_name = title_case(parse_display_name(animal.name))
-        self._current_name = display_name
+        cache_key = self._layout_key(animal.id)
+        with self._layout_lock:
+            surfaces = self._layout_cache.get(cache_key)
+
+        if surfaces is None:
+            surfaces = self._build_surfaces(animal)
+            with self._layout_lock:
+                self._layout_cache[cache_key] = surfaces
+
+        self._apply_animal(animal, surfaces)
+
+    def _layout_key(self, animal_id: str) -> str:
+        return f"{animal_id}:{self.width}x{self.height}"
+
+    def _prewarm_animal(self, animal: CachedAnimal) -> bool:
+        cache_key = self._layout_key(animal.id)
+        with self._layout_lock:
+            if cache_key in self._layout_cache:
+                return False
+        try:
+            surfaces = self._build_surfaces(animal)
+        except Exception:
+            log.exception("Failed prewarming layout for %s", animal.id)
+            return False
+        with self._layout_lock:
+            if cache_key not in self._layout_cache:
+                self._layout_cache[cache_key] = surfaces
+        return True
+
+    def _apply_animal(
+        self,
+        animal: CachedAnimal,
+        surfaces: list[tuple[pygame.Surface, PhotoPlacement]],
+    ) -> None:
+        self._empty_message = None
+        self._current_name = title_case(parse_display_name(animal.name))
         self._current_bio = format_card_text(animal)
         self._current_qr = self._load_qr(animal.id)
+        self._current_surfaces = surfaces
 
+    def _build_surfaces(self, animal: CachedAnimal) -> list[tuple[pygame.Surface, PhotoPlacement]]:
         layout_random = random.Random(hash(animal.id.lower()) & 0xFFFFFFFF)
         surfaces: list[tuple[pygame.Surface, PhotoPlacement]] = []
 
         photos = [self._load_photo(path) for path in animal.photo_paths[:5]]
         photos = [photo for photo in photos if photo is not None]
         if not photos:
-            self._current_surfaces = []
-            return
+            return []
 
         if len(photos) == 1:
             placement = PhotoPlacement(0.50, 0.52, 0.78, -2, 1)
@@ -126,7 +178,7 @@ class KioskDisplay:
                 surfaces.append((self._compose_photo(photo, placement, rotation), placement))
 
         surfaces.sort(key=lambda item: item[1].z_index)
-        self._current_surfaces = surfaces
+        return surfaces
 
     def draw(self, menu: MenuState, sync_status: str) -> None:
         self.screen.fill(BG_COLOR)

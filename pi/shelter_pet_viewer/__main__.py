@@ -18,6 +18,8 @@ from .sync_scheduler import SyncScheduler
 
 log = logging.getLogger(__name__)
 
+ACTION_EVENT = pygame.USEREVENT + 1
+
 
 def _load_pi_config() -> dict:
     path = pi_config_path()
@@ -27,6 +29,21 @@ def _load_pi_config() -> dict:
             return json.loads(example.read_text(encoding="utf-8"))
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _post_action(action: str) -> None:
+    pygame.event.post(pygame.event.Event(ACTION_EVENT, action=action))
+
+
+def _key_action(key: int) -> str | None:
+    mapping = {
+        pygame.K_RIGHT: "forward",
+        pygame.K_LEFT: "back",
+        pygame.K_m: "menu",
+        pygame.K_ESCAPE: "return",
+        pygame.K_BACKSPACE: "return",
+    }
+    return mapping.get(key)
 
 
 def main() -> int:
@@ -52,6 +69,7 @@ def main() -> int:
 
     def reload_slideshow() -> None:
         animals = load_cached_animals(settings.mode, cache_root())
+        display.clear_layout_cache()
         session = session_holder["session"]
         if session is None:
             session_holder["session"] = SlideshowSession(
@@ -64,6 +82,7 @@ def main() -> int:
         else:
             session.auto_advance_seconds = settings.auto_advance_seconds
             session.reload(animals)
+        display.prewarm_animals(animals)
 
     def on_settings_changed(updated: AppSettings) -> None:
         nonlocal settings
@@ -77,33 +96,37 @@ def main() -> int:
     scheduler = SyncScheduler(interval_hours=sync_hours, on_complete=reload_slideshow)
     menu = MenuController(settings, on_settings_changed, on_sync_requested=scheduler.request_sync)
 
-    def handle_forward() -> None:
-        if menu.state.visible:
-            menu.move(1)
-        else:
-            session = session_holder["session"]
-            if session is not None:
-                session.show_next()
+    def process_action(action: str) -> None:
+        if action == "forward":
+            if menu.state.visible:
+                menu.move(1)
+            else:
+                session = session_holder["session"]
+                if session is not None:
+                    session.show_next()
+        elif action == "back":
+            if menu.state.visible:
+                menu.move(-1)
+            else:
+                session = session_holder["session"]
+                if session is not None:
+                    session.show_previous()
+        elif action == "menu":
+            if menu.state.visible:
+                menu.activate()
+            else:
+                menu.open_root()
+                menu.set_status(scheduler.status.last_message)
+        elif action == "return":
+            menu.go_up()
 
-    def handle_back() -> None:
-        if menu.state.visible:
-            menu.move(-1)
-        else:
-            session = session_holder["session"]
-            if session is not None:
-                session.show_previous()
-
-    def handle_menu() -> None:
-        if menu.state.visible:
-            menu.activate()
-        else:
-            menu.open_root()
-            menu.set_status(scheduler.status.last_message)
-
-    def handle_return() -> None:
-        menu.go_up()
-
-    buttons = ButtonInput(pins, handle_forward, handle_back, handle_menu, handle_return)
+    buttons = ButtonInput(
+        pins,
+        lambda: _post_action("forward"),
+        lambda: _post_action("back"),
+        lambda: _post_action("menu"),
+        lambda: _post_action("return"),
+    )
 
     reload_slideshow()
     scheduler.start()
@@ -114,11 +137,15 @@ def main() -> int:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == ACTION_EVENT:
+                process_action(event.action)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                     running = False
                 else:
-                    buttons.handle_key(event.key)
+                    action = _key_action(event.key)
+                    if action is not None:
+                        process_action(action)
 
         session = session_holder["session"]
         if session is not None and not menu.state.visible:
