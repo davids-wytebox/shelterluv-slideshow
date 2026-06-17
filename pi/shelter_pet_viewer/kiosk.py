@@ -76,7 +76,7 @@ class KioskDisplay:
 
         self._photo_cache: dict[str, pygame.Surface] = {}
         self._qr_cache: dict[str, pygame.Surface] = {}
-        self._current_surfaces: list[tuple[pygame.Surface, PhotoPlacement, float]] = []
+        self._current_surfaces: list[tuple[pygame.Surface, PhotoPlacement]] = []
         self._current_name = ""
         self._current_bio = ""
         self._current_qr: pygame.Surface | None = None
@@ -104,8 +104,7 @@ class KioskDisplay:
         self._current_qr = self._load_qr(animal.id)
 
         layout_random = random.Random(hash(animal.id.lower()) & 0xFFFFFFFF)
-        base_size = min(self.width, self.height)
-        surfaces: list[tuple[pygame.Surface, PhotoPlacement, float]] = []
+        surfaces: list[tuple[pygame.Surface, PhotoPlacement]] = []
 
         photos = [self._load_photo(path) for path in animal.photo_paths[:5]]
         photos = [photo for photo in photos if photo is not None]
@@ -116,14 +115,15 @@ class KioskDisplay:
         if len(photos) == 1:
             placement = PhotoPlacement(0.50, 0.52, 0.78, -2, 1)
             jitter = (layout_random.random() - 0.5) * 4
-            surfaces.append((photos[0], placement, jitter))
+            surfaces.append((self._compose_photo(photos[0], placement, jitter), placement))
         else:
             placements = PLACEMENTS.get(len(photos), PLACEMENTS[5])
             for index, photo in enumerate(photos):
                 placement_index = _placement_index(len(photos), index)
                 placement = placements[placement_index]
                 jitter = (layout_random.random() - 0.5) * 4
-                surfaces.append((photo, placement, placement.rotation + jitter))
+                rotation = placement.rotation + jitter
+                surfaces.append((self._compose_photo(photo, placement, rotation), placement))
 
         surfaces.sort(key=lambda item: item[1].z_index)
         self._current_surfaces = surfaces
@@ -145,34 +145,42 @@ class KioskDisplay:
         pygame.display.flip()
 
     def _draw_photos(self) -> None:
-        for surface, placement, rotation in self._current_surfaces:
-            self._draw_rotated_photo(surface, placement, rotation)
+        for surface, placement in self._current_surfaces:
+            rect = surface.get_rect(
+                center=(
+                    int(placement.center_x * self.width),
+                    int(placement.center_y * self.height),
+                )
+            )
+            self.screen.blit(surface, rect)
 
-    def _draw_rotated_photo(self, photo: pygame.Surface, placement: PhotoPlacement, rotation: float) -> None:
+    def _compose_photo(self, photo: pygame.Surface, placement: PhotoPlacement, rotation: float) -> pygame.Surface:
         max_side = min(self.width, self.height) * placement.scale
         scale = min(max_side / photo.get_width(), max_side / photo.get_height())
         target = (
             max(1, int(photo.get_width() * scale)),
             max(1, int(photo.get_height() * scale)),
         )
-        scaled = pygame.transform.smoothscale(photo, target)
 
         padding = 12
         border = 2
+        pil = Image.frombytes("RGB", photo.get_size(), pygame.image.tobytes(photo, "RGB"))
+        pil = pil.resize(target, Image.Resampling.LANCZOS)
+
         frame_w = target[0] + padding * 2 + border * 2
         frame_h = target[1] + padding * 2 + border * 2
-        framed = pygame.Surface((frame_w, frame_h), pygame.SRCALPHA)
-        framed.fill((30, 30, 30))
-        inner = pygame.Surface((frame_w - border * 2, frame_h - border * 2), pygame.SRCALPHA)
-        inner.fill(WHITE)
-        inner.blit(scaled, (padding, padding))
-        framed.blit(inner, (border, border))
+        framed = Image.new("RGB", (frame_w, frame_h), (30, 30, 30))
+        inner = Image.new("RGB", (frame_w - border * 2, frame_h - border * 2), WHITE)
+        inner.paste(pil, (padding, padding))
+        framed.paste(inner, (border, border))
 
-        rotated = pygame.transform.rotate(framed, rotation)
-        rect = rotated.get_rect(
-            center=(int(placement.center_x * self.width), int(placement.center_y * self.height))
+        rotated = framed.rotate(
+            rotation,
+            resample=Image.Resampling.BICUBIC,
+            expand=True,
+            fillcolor=(242, 242, 240),
         )
-        self.screen.blit(rotated, rect)
+        return pygame.image.frombytes(rotated.tobytes(), rotated.size, "RGB")
 
     def _name_y(self) -> int:
         return max(120, int(self.height * 0.10))
