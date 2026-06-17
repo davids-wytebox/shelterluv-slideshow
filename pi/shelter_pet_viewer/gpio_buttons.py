@@ -48,7 +48,11 @@ class ButtonInput:
                     pins.get("return"),
                 )
             except Exception as exc:
-                log.warning("GPIO setup failed (%s); using keyboard only.", exc)
+                log.warning(
+                    "GPIO setup failed (%s); using keyboard only. "
+                    "On Raspberry Pi OS run: sudo apt install python3-lgpio && rm -rf pi/.venv && ./setup.sh",
+                    exc,
+                )
                 self._use_gpio = False
                 self._buttons.clear()
         else:

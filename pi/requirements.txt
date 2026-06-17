@@ -1,3 +1,6 @@
+# Python app dependencies (install via pip in setup.sh).
+# GPIO: gpiozero also needs the lgpio backend on Raspberry Pi OS — installed
+# by setup.sh via apt (python3-lgpio), not this file.
 pygame>=2.5.0
 gpiozero>=2.0
 Pillow>=10.0.0

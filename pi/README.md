@@ -57,7 +57,7 @@ Menu options:
 ```bash
 sudo apt update
 sudo apt install -y git python3-venv python3-pip libsdl2-dev libjpeg-dev \
-  libpng-dev python3-dev python3-gpiozero
+  libpng-dev python3-dev python3-lgpio python3-libgpiod
 ```
 
 Add your user to the `gpio` group (log out and back in afterward):
@@ -261,6 +261,7 @@ rsync -av "/mnt/windows/Users/YourName/AppData/Roaming/ShelterPetViewer/cache/" 
 |---------|-----|
 | Black screen on boot | Check `journalctl -u shelter-pet-viewer`; ensure desktop autologin is enabled |
 | Buttons do nothing | Verify wiring to GND; check `config.json` pins; confirm user is in `gpio` group |
+| `lgpio` / `RPi.GPIO` / `pigpio` missing | Run `./setup.sh` again, or `sudo apt install python3-lgpio` then recreate venv: `rm -rf .venv && ./setup.sh` |
 | No animals shown | Wait for first sync or run manual update; check log file |
 | pygame won't start | Run from desktop session (needs `DISPLAY=:0`), not SSH without X |
 | GPIO "permission denied" | `sudo usermod -aG gpio $USER` and re-login |
