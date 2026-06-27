@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class ButtonInput:
         on_back: Callable[[], None],
         on_menu: Callable[[], None],
         on_return: Callable[[], None],
+        debounce_seconds: float = 0.2,
     ) -> None:
         self._handlers = {
             "forward": on_forward,
@@ -33,12 +35,14 @@ class ButtonInput:
         }
         self._buttons: list[object] = []
         self._use_gpio = GPIO_AVAILABLE
+        self._debounce_seconds = debounce_seconds
+        self._last_press: dict[str, float] = {}
 
         if self._use_gpio:
             try:
                 for name, pin in pins.items():
-                    button = Button(pin, pull_up=True, bounce_time=0.08)
-                    button.when_pressed = self._handlers[name]
+                    button = Button(pin, pull_up=True, bounce_time=0.15)
+                    button.when_pressed = self._debounced(self._handlers[name], name)
                     self._buttons.append(button)
                 log.info(
                     "GPIO buttons enabled: forward=%s back=%s menu=%s return=%s",
@@ -57,6 +61,17 @@ class ButtonInput:
                 self._buttons.clear()
         else:
             log.info("gpiozero unavailable; using keyboard controls only.")
+
+    def _debounced(self, handler: Callable[[], None], name: str) -> Callable[[], None]:
+        def wrapped() -> None:
+            now = time.monotonic()
+            last = self._last_press.get(name, 0.0)
+            if now - last < self._debounce_seconds:
+                return
+            self._last_press[name] = now
+            handler()
+
+        return wrapped
 
     def handle_key(self, key: int) -> bool:
         import pygame

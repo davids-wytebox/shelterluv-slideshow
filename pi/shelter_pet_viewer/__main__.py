@@ -19,6 +19,7 @@ from .sync_scheduler import SyncScheduler
 log = logging.getLogger(__name__)
 
 ACTION_EVENT = pygame.USEREVENT + 1
+MAX_NAV_STEPS_PER_FRAME = 2
 
 
 def _load_pi_config() -> dict:
@@ -107,27 +108,47 @@ def main() -> int:
     scheduler = SyncScheduler(interval_hours=sync_hours, on_complete=reload_slideshow)
     menu = MenuController(settings, on_settings_changed, on_sync_requested=scheduler.request_sync)
 
-    def process_action(action: str) -> None:
+    def process_menu_action(action: str) -> None:
         if action == "forward":
-            if menu.state.visible:
-                menu.move(1)
-            else:
-                session = session_holder["session"]
-                if session is not None:
-                    session.show_next()
+            menu.move(1)
         elif action == "back":
-            if menu.state.visible:
-                menu.move(-1)
-            else:
-                session = session_holder["session"]
-                if session is not None:
-                    session.show_previous()
+            menu.move(-1)
         elif action == "menu":
-            if menu.state.visible:
-                menu.activate()
-            else:
-                menu.open_root()
-                menu.set_status(scheduler.status.last_message)
+            menu.activate()
+        elif action == "return":
+            menu.go_up()
+
+    def process_pending_nav() -> None:
+        nonlocal pending_forward, pending_back
+        if display.is_loading():
+            return
+
+        session = session_holder["session"]
+        if session is None:
+            return
+
+        net = pending_forward - pending_back
+        if net == 0:
+            return
+
+        steps = min(abs(net), MAX_NAV_STEPS_PER_FRAME)
+        if net > 0:
+            for _ in range(steps):
+                if display.is_loading():
+                    break
+                session.show_next()
+            pending_forward -= steps
+        else:
+            for _ in range(steps):
+                if display.is_loading():
+                    break
+                session.show_previous()
+            pending_back -= steps
+
+    def process_slideshow_action(action: str) -> None:
+        if action == "menu":
+            menu.open_root()
+            menu.set_status(scheduler.status.last_message)
         elif action == "return":
             menu.go_up()
 
@@ -142,31 +163,71 @@ def main() -> int:
     reload_slideshow()
     scheduler.start()
 
+    pending_forward = 0
+    pending_back = 0
+
     running = True
     while running:
         delta = clock.tick(60)
-        for event in pygame.event.get():
+        events = pygame.event.get()
+
+        forward_steps = 0
+        back_steps = 0
+        menu_actions: list[str] = []
+        slideshow_actions: list[str] = []
+        layout_ready_ids: list[str] = []
+
+        for event in events:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == ACTION_EVENT:
-                process_action(event.action)
+                if menu.state.visible:
+                    menu_actions.append(event.action)
+                elif event.action == "forward":
+                    forward_steps += 1
+                elif event.action == "back":
+                    back_steps += 1
+                else:
+                    slideshow_actions.append(event.action)
             elif event.type == LAYOUT_READY_EVENT:
-                session = session_holder["session"]
-                if session is None:
-                    continue
-                current = session.current_animal()
-                if current is not None and current.id == event.animal_id:
-                    if display.try_apply_animal(current):
-                        prefetch_neighbors()
+                layout_ready_ids.append(event.animal_id)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                     running = False
                 else:
                     action = _key_action(event.key)
-                    if action is not None:
-                        process_action(action)
+                    if action is None:
+                        continue
+                    if menu.state.visible:
+                        menu_actions.append(action)
+                    elif action == "forward":
+                        forward_steps += 1
+                    elif action == "back":
+                        back_steps += 1
+                    else:
+                        slideshow_actions.append(action)
+
+        pending_forward = min(pending_forward + forward_steps, 20)
+        pending_back = min(pending_back + back_steps, 20)
+
+        for action in menu_actions:
+            process_menu_action(action)
+
+        if not menu.state.visible:
+            process_pending_nav()
+
+        for action in slideshow_actions:
+            process_slideshow_action(action)
 
         session = session_holder["session"]
+        for animal_id in layout_ready_ids:
+            if session is None:
+                continue
+            current = session.current_animal()
+            if current is not None and current.id == animal_id:
+                if display.try_apply_animal(current):
+                    prefetch_neighbors()
+
         if session is not None and not menu.state.visible and not display.is_loading():
             session.tick(delta)
 
