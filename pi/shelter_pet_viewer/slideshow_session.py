@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import random
-from typing import Callable
+from typing import Any, Callable
 
 from .cache_loader import CachedAnimal
+
+log = logging.getLogger(__name__)
 
 
 class SlideshowSession:
@@ -60,11 +63,36 @@ class SlideshowSession:
             return
         self.show_random_next()
 
-    def show_previous(self) -> None:
+    def show_previous(self) -> bool:
         if not self._can_go_back():
-            return
+            log.info(
+                "[nav] show_previous blocked: history_pos=%s history_len=%s animal=%s",
+                self._history_position,
+                len(self._history),
+                self._animal_id(),
+            )
+            return False
         self._history_position -= 1
-        self._show_at(self._history[self._history_position])
+        index = self._history[self._history_position]
+        log.info(
+            "[nav] show_previous: history_pos=%s/%s -> animal_index=%s id=%s",
+            self._history_position,
+            len(self._history) - 1,
+            index,
+            self._animals[index].id if 0 <= index < len(self._animals) else "?",
+        )
+        self._show_at(index)
+        return True
+
+    def nav_snapshot(self) -> dict[str, Any]:
+        animal = self.current_animal()
+        return {
+            "history_pos": self._history_position,
+            "history_len": len(self._history),
+            "can_back": self._can_go_back(),
+            "can_forward": self._can_go_forward(),
+            "animal_id": animal.id if animal else None,
+        }
 
     def show_random_next(self) -> None:
         self.reset_timer()
@@ -108,6 +136,10 @@ class SlideshowSession:
         self._current_index = index
         self.reset_timer()
         self._notify(self._animals[index])
+
+    def _animal_id(self) -> str | None:
+        animal = self.current_animal()
+        return animal.id if animal else None
 
     def _notify(self, animal: CachedAnimal | None) -> None:
         if self._on_change is not None:

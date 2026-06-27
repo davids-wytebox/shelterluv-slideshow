@@ -152,21 +152,22 @@ class KioskDisplay:
 
         if self._is_layout_cached(animal.id):
             surfaces = self._get_cached_layout(animal.id)
-            self._apply_animal(animal, surfaces)
+            self._apply_animal(animal, surfaces, source="show_animal")
             self._clear_display_target_if_matches(animal.id)
             return True
 
+        log.info("[nav] show_animal deferred: %s (layout not cached, was showing %s)", animal.id, self._current_animal_id)
         with self._loader_lock:
             self._display_target = animal
             self._display_target_since = time.monotonic()
             self._loader_notify.notify()
         return False
 
-    def try_apply_animal(self, animal: CachedAnimal) -> bool:
+    def try_apply_animal(self, animal: CachedAnimal, *, source: str = "try_apply") -> bool:
         if not self._is_layout_cached(animal.id):
             return False
         surfaces = self._get_cached_layout(animal.id)
-        self._apply_animal(animal, surfaces)
+        self._apply_animal(animal, surfaces, source=source)
         self._clear_display_target_if_matches(animal.id)
         return True
 
@@ -214,10 +215,15 @@ class KioskDisplay:
                 break
 
     def _signal_layout_ready(self, animal_id: str) -> None:
+        log.info("[nav] layout ready for %s (display_target=%s)", animal_id, self._display_target_id())
         try:
             self._ready_queue.put_nowait(animal_id)
         except queue.Full:
             pass
+
+    def _display_target_id(self) -> str | None:
+        with self._loader_lock:
+            return self._display_target.id if self._display_target else None
 
     def _complete_display_job(self, animal: CachedAnimal, built: bool) -> None:
         with self._loader_lock:
@@ -285,7 +291,16 @@ class KioskDisplay:
         self,
         animal: CachedAnimal,
         surfaces: list[tuple[pygame.Surface, PhotoPlacement]],
+        *,
+        source: str = "apply",
     ) -> None:
+        log.info(
+            "[nav] image shown: %s (%s) via %s (was %s)",
+            animal.id,
+            title_case(parse_display_name(animal.name)),
+            source,
+            self._current_animal_id,
+        )
         self._empty_message = None
         self._current_animal_id = animal.id
         self._current_name = title_case(parse_display_name(animal.name))

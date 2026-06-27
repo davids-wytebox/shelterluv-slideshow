@@ -26,7 +26,7 @@ class ButtonInput:
         on_menu: Callable[[], None],
         on_return: Callable[[], None],
         debounce_seconds: float = 0.25,
-        back_debounce_seconds: float = 0.35,
+        back_debounce_seconds: float = 0.25,
     ) -> None:
         self._handlers = {
             "forward": on_forward,
@@ -43,8 +43,7 @@ class ButtonInput:
         if self._use_gpio:
             try:
                 for name, pin in pins.items():
-                    bounce = 0.2 if name == "back" else 0.15
-                    button = Button(pin, pull_up=True, bounce_time=bounce)
+                    button = Button(pin, pull_up=True, bounce_time=0.15)
                     debounce = back_debounce_seconds if name == "back" else debounce_seconds
                     button.when_pressed = self._debounced(self._handlers[name], name, debounce)
                     self._buttons.append(button)
@@ -77,9 +76,18 @@ class ButtonInput:
         def wrapped() -> None:
             now = time.monotonic()
             last = self._last_press.get(name, 0.0)
+            elapsed_ms = (now - last) * 1000
             if now - last < interval:
+                if name == "back":
+                    log.info(
+                        "[nav] gpio back suppressed by debounce (%.0fms since last, need %.0fms)",
+                        elapsed_ms,
+                        interval * 1000,
+                    )
                 return
             self._last_press[name] = now
+            if name == "back":
+                log.info("[nav] gpio back press accepted (%.0fms since last)", elapsed_ms)
             handler()
 
         return wrapped

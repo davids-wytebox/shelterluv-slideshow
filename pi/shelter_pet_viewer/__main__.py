@@ -32,14 +32,23 @@ class ActionQueue:
     def put(self, action: str) -> None:
         with self._lock:
             if len(self._items) >= 64:
-                self._items.pop(0)
+                dropped = self._items.pop(0)
+                log.warning("[nav] action_queue full; dropped oldest: %s", dropped)
             self._items.append(action)
+            if action == "back":
+                log.info("[nav] action_queue put: back (depth=%s)", len(self._items))
 
     def drain(self) -> list[str]:
         with self._lock:
             items = self._items
             self._items = []
+            if "back" in items:
+                log.info("[nav] action_queue drain: %s (depth=%s)", items, len(items))
             return items
+
+    def depth(self) -> int:
+        with self._lock:
+            return len(self._items)
 
 
 def _load_pi_config() -> dict:
@@ -99,10 +108,14 @@ def main() -> int:
         current = session.current_animal()
         if current is None:
             return
-        if display.needs_apply(current) and display.try_apply_animal(current):
+        if display.needs_apply(current) and display.try_apply_animal(current, source="apply_current_if_ready"):
             prefetch_neighbors()
 
     def on_animal_changed(animal) -> None:
+        if animal is None:
+            log.info("[nav] session changed: no animal")
+        else:
+            log.info("[nav] session changed: %s loading=%s", animal.id, display.is_loading())
         if display.show_animal(animal):
             prefetch_neighbors()
 
@@ -157,6 +170,18 @@ def main() -> int:
             return
 
         steps = min(abs(pending_nav), MAX_NAV_STEPS_PER_FRAME)
+        direction = "forward" if pending_nav > 0 else "back"
+        before = session.nav_snapshot()
+        log.info(
+            "[nav] process_pending_nav: %s steps=%s pending_nav=%s queue_depth=%s sync=%s loading=%s state=%s",
+            direction,
+            steps,
+            pending_nav,
+            action_queue.depth(),
+            scheduler.status.running,
+            display.is_loading(),
+            before,
+        )
         if pending_nav > 0:
             for _ in range(steps):
                 session.show_next()
@@ -165,6 +190,13 @@ def main() -> int:
             for _ in range(steps):
                 session.show_previous()
             pending_nav += steps
+        after = session.nav_snapshot()
+        log.info(
+            "[nav] process_pending_nav done: pending_nav=%s state=%s -> %s",
+            pending_nav,
+            before,
+            after,
+        )
 
     def process_slideshow_action(action: str) -> None:
         if action == "menu":
@@ -193,6 +225,7 @@ def main() -> int:
 
         if reload_requested.is_set():
             reload_requested.clear()
+            log.info("[nav] reload_slideshow: clearing pending_nav")
             pending_nav = 0
             reload_slideshow()
 
@@ -206,6 +239,10 @@ def main() -> int:
             if menu.state.visible:
                 menu_actions.append(action)
             elif sync_in_progress:
+                if action == "back":
+                    log.info("[nav] back dropped: sync in progress (queue had back)")
+                elif action == "forward":
+                    log.info("[nav] forward dropped: sync in progress")
                 if action in ("menu", "return"):
                     slideshow_actions.append(action)
             elif action == "forward":
@@ -228,17 +265,32 @@ def main() -> int:
                     if menu.state.visible:
                         menu_actions.append(action)
                     elif sync_in_progress:
+                        if action == "back":
+                            log.info("[nav] keyboard back dropped: sync in progress")
+                        elif action == "forward":
+                            log.info("[nav] keyboard forward dropped: sync in progress")
                         if action in ("menu", "return"):
                             slideshow_actions.append(action)
                     elif action == "forward":
                         forward_steps += 1
                     elif action == "back":
+                        log.info("[nav] keyboard back registered")
                         back_steps += 1
                     else:
                         slideshow_actions.append(action)
 
         if not sync_in_progress:
+            prev_pending = pending_nav
             pending_nav = max(-20, min(20, pending_nav + forward_steps - back_steps))
+            if back_steps or (prev_pending != pending_nav and pending_nav < 0):
+                log.info(
+                    "[nav] pending_nav %s -> %s (back_steps=%s forward_steps=%s queue_depth=%s)",
+                    prev_pending,
+                    pending_nav,
+                    back_steps,
+                    forward_steps,
+                    action_queue.depth(),
+                )
 
         display.recover_stuck_loading()
 
@@ -257,7 +309,7 @@ def main() -> int:
                 continue
             current = session.current_animal()
             if current is not None and current.id == animal_id:
-                if display.try_apply_animal(current):
+                if display.try_apply_animal(current, source="layout_ready"):
                     prefetch_neighbors()
 
         apply_current_if_ready()
