@@ -106,6 +106,8 @@ def main() -> int:
         if display.show_animal(animal):
             prefetch_neighbors()
 
+    reload_requested = threading.Event()
+
     def reload_slideshow() -> None:
         animals = load_cached_animals(settings.mode, cache_root())
         display.clear_layout_cache()
@@ -123,6 +125,9 @@ def main() -> int:
             session.reload(animals)
         display.prewarm_animals(animals)
 
+    def request_reload() -> None:
+        reload_requested.set()
+
     def on_settings_changed(updated: AppSettings) -> None:
         nonlocal settings
         settings = updated
@@ -132,7 +137,7 @@ def main() -> int:
         reload_slideshow()
         menu.set_status(f"Saved: {settings.mode.value}, {settings.auto_advance_seconds}s")
 
-    scheduler = SyncScheduler(interval_hours=sync_hours, on_complete=reload_slideshow)
+    scheduler = SyncScheduler(interval_hours=sync_hours, on_complete=request_reload)
     menu = MenuController(settings, on_settings_changed, on_sync_requested=scheduler.request_sync)
 
     def process_menu_action(action: str) -> None:
@@ -146,24 +151,20 @@ def main() -> int:
             menu.go_up()
 
     def process_pending_nav() -> None:
-        nonlocal pending_forward, pending_back
+        nonlocal pending_nav
         session = session_holder["session"]
-        if session is None:
+        if session is None or pending_nav == 0:
             return
 
-        net = pending_forward - pending_back
-        if net == 0:
-            return
-
-        steps = min(abs(net), MAX_NAV_STEPS_PER_FRAME)
-        if net > 0:
+        steps = min(abs(pending_nav), MAX_NAV_STEPS_PER_FRAME)
+        if pending_nav > 0:
             for _ in range(steps):
                 session.show_next()
-            pending_forward -= steps
+            pending_nav -= steps
         else:
             for _ in range(steps):
                 session.show_previous()
-            pending_back -= steps
+            pending_nav += steps
 
     def process_slideshow_action(action: str) -> None:
         if action == "menu":
@@ -183,22 +184,30 @@ def main() -> int:
     reload_slideshow()
     scheduler.start()
 
-    pending_forward = 0
-    pending_back = 0
+    pending_nav = 0
 
     running = True
     while running:
         delta = clock.tick(60)
         events = pygame.event.get()
 
+        if reload_requested.is_set():
+            reload_requested.clear()
+            pending_nav = 0
+            reload_slideshow()
+
         forward_steps = 0
         back_steps = 0
         menu_actions: list[str] = []
         slideshow_actions: list[str] = []
+        sync_in_progress = scheduler.status.running
 
         for action in action_queue.drain():
             if menu.state.visible:
                 menu_actions.append(action)
+            elif sync_in_progress:
+                if action in ("menu", "return"):
+                    slideshow_actions.append(action)
             elif action == "forward":
                 forward_steps += 1
             elif action == "back":
@@ -218,6 +227,9 @@ def main() -> int:
                         continue
                     if menu.state.visible:
                         menu_actions.append(action)
+                    elif sync_in_progress:
+                        if action in ("menu", "return"):
+                            slideshow_actions.append(action)
                     elif action == "forward":
                         forward_steps += 1
                     elif action == "back":
@@ -225,8 +237,8 @@ def main() -> int:
                     else:
                         slideshow_actions.append(action)
 
-        pending_forward = min(pending_forward + forward_steps, 20)
-        pending_back = min(pending_back + back_steps, 20)
+        if not sync_in_progress:
+            pending_nav = max(-20, min(20, pending_nav + forward_steps - back_steps))
 
         display.recover_stuck_loading()
 

@@ -25,7 +25,8 @@ class ButtonInput:
         on_back: Callable[[], None],
         on_menu: Callable[[], None],
         on_return: Callable[[], None],
-        debounce_seconds: float = 0.2,
+        debounce_seconds: float = 0.25,
+        back_debounce_seconds: float = 0.35,
     ) -> None:
         self._handlers = {
             "forward": on_forward,
@@ -36,13 +37,16 @@ class ButtonInput:
         self._buttons: list[object] = []
         self._use_gpio = GPIO_AVAILABLE
         self._debounce_seconds = debounce_seconds
+        self._back_debounce_seconds = back_debounce_seconds
         self._last_press: dict[str, float] = {}
 
         if self._use_gpio:
             try:
                 for name, pin in pins.items():
-                    button = Button(pin, pull_up=True, bounce_time=0.15)
-                    button.when_pressed = self._debounced(self._handlers[name], name)
+                    bounce = 0.2 if name == "back" else 0.15
+                    button = Button(pin, pull_up=True, bounce_time=bounce)
+                    debounce = back_debounce_seconds if name == "back" else debounce_seconds
+                    button.when_pressed = self._debounced(self._handlers[name], name, debounce)
                     self._buttons.append(button)
                 log.info(
                     "GPIO buttons enabled: forward=%s back=%s menu=%s return=%s",
@@ -62,11 +66,18 @@ class ButtonInput:
         else:
             log.info("gpiozero unavailable; using keyboard controls only.")
 
-    def _debounced(self, handler: Callable[[], None], name: str) -> Callable[[], None]:
+    def _debounced(
+        self,
+        handler: Callable[[], None],
+        name: str,
+        debounce_seconds: float | None = None,
+    ) -> Callable[[], None]:
+        interval = debounce_seconds if debounce_seconds is not None else self._debounce_seconds
+
         def wrapped() -> None:
             now = time.monotonic()
             last = self._last_press.get(name, 0.0)
-            if now - last < self._debounce_seconds:
+            if now - last < interval:
                 return
             self._last_press[name] = now
             handler()
