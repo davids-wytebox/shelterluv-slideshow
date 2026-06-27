@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 
 import pygame
 
 from .cache_loader import load_cached_animals
 from .gpio_buttons import ButtonInput
-from .kiosk import KioskDisplay, LAYOUT_READY_EVENT
+from .kiosk import KioskDisplay
 from .log_util import configure_logging
 from .menu import MenuController
 from .paths import app_data_dir, cache_root, pi_config_path
@@ -18,8 +19,27 @@ from .sync_scheduler import SyncScheduler
 
 log = logging.getLogger(__name__)
 
-ACTION_EVENT = pygame.USEREVENT + 1
 MAX_NAV_STEPS_PER_FRAME = 2
+
+
+class ActionQueue:
+    """Thread-safe input queue for GPIO (never post pygame events from other threads)."""
+
+    def __init__(self, max_size: int = 64) -> None:
+        self._items: list[str] = []
+        self._lock = threading.Lock()
+
+    def put(self, action: str) -> None:
+        with self._lock:
+            if len(self._items) >= 64:
+                self._items.pop(0)
+            self._items.append(action)
+
+    def drain(self) -> list[str]:
+        with self._lock:
+            items = self._items
+            self._items = []
+            return items
 
 
 def _load_pi_config() -> dict:
@@ -30,10 +50,6 @@ def _load_pi_config() -> dict:
             return json.loads(example.read_text(encoding="utf-8"))
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _post_action(action: str) -> None:
-    pygame.event.post(pygame.event.Event(ACTION_EVENT, action=action))
 
 
 def _key_action(key: int) -> str | None:
@@ -65,6 +81,7 @@ def main() -> int:
     settings = AppSettings.load()
     display = KioskDisplay(fullscreen=fullscreen, hide_cursor=hide_cursor)
     clock = pygame.time.Clock()
+    action_queue = ActionQueue()
 
     session_holder: dict[str, SlideshowSession | None] = {"session": None}
 
@@ -74,6 +91,16 @@ def main() -> int:
             return
         display.prefetch_animal(session.peek_next())
         display.prefetch_animal(session.peek_previous())
+
+    def apply_current_if_ready() -> None:
+        session = session_holder["session"]
+        if session is None:
+            return
+        current = session.current_animal()
+        if current is None:
+            return
+        if display.needs_apply(current) and display.try_apply_animal(current):
+            prefetch_neighbors()
 
     def on_animal_changed(animal) -> None:
         if display.show_animal(animal):
@@ -120,9 +147,6 @@ def main() -> int:
 
     def process_pending_nav() -> None:
         nonlocal pending_forward, pending_back
-        if display.is_loading():
-            return
-
         session = session_holder["session"]
         if session is None:
             return
@@ -134,14 +158,10 @@ def main() -> int:
         steps = min(abs(net), MAX_NAV_STEPS_PER_FRAME)
         if net > 0:
             for _ in range(steps):
-                if display.is_loading():
-                    break
                 session.show_next()
             pending_forward -= steps
         else:
             for _ in range(steps):
-                if display.is_loading():
-                    break
                 session.show_previous()
             pending_back -= steps
 
@@ -154,10 +174,10 @@ def main() -> int:
 
     buttons = ButtonInput(
         pins,
-        lambda: _post_action("forward"),
-        lambda: _post_action("back"),
-        lambda: _post_action("menu"),
-        lambda: _post_action("return"),
+        lambda: action_queue.put("forward"),
+        lambda: action_queue.put("back"),
+        lambda: action_queue.put("menu"),
+        lambda: action_queue.put("return"),
     )
 
     reload_slideshow()
@@ -175,22 +195,20 @@ def main() -> int:
         back_steps = 0
         menu_actions: list[str] = []
         slideshow_actions: list[str] = []
-        layout_ready_ids: list[str] = []
+
+        for action in action_queue.drain():
+            if menu.state.visible:
+                menu_actions.append(action)
+            elif action == "forward":
+                forward_steps += 1
+            elif action == "back":
+                back_steps += 1
+            else:
+                slideshow_actions.append(action)
 
         for event in events:
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == ACTION_EVENT:
-                if menu.state.visible:
-                    menu_actions.append(event.action)
-                elif event.action == "forward":
-                    forward_steps += 1
-                elif event.action == "back":
-                    back_steps += 1
-                else:
-                    slideshow_actions.append(event.action)
-            elif event.type == LAYOUT_READY_EVENT:
-                layout_ready_ids.append(event.animal_id)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                     running = False
@@ -210,6 +228,8 @@ def main() -> int:
         pending_forward = min(pending_forward + forward_steps, 20)
         pending_back = min(pending_back + back_steps, 20)
 
+        display.recover_stuck_loading()
+
         for action in menu_actions:
             process_menu_action(action)
 
@@ -219,8 +239,8 @@ def main() -> int:
         for action in slideshow_actions:
             process_slideshow_action(action)
 
-        session = session_holder["session"]
-        for animal_id in layout_ready_ids:
+        for animal_id in display.drain_ready_layout_ids():
+            session = session_holder["session"]
             if session is None:
                 continue
             current = session.current_animal()
@@ -228,6 +248,9 @@ def main() -> int:
                 if display.try_apply_animal(current):
                     prefetch_neighbors()
 
+        apply_current_if_ready()
+
+        session = session_holder["session"]
         if session is not None and not menu.state.visible and not display.is_loading():
             session.tick(delta)
 

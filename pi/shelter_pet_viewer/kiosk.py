@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import logging
+import queue
 import random
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,8 +17,6 @@ from .cache_loader import CachedAnimal, format_card_text, parse_display_name, ti
 from .menu import MenuController, MenuState
 
 log = logging.getLogger(__name__)
-
-LAYOUT_READY_EVENT = pygame.USEREVENT + 2
 
 BG_COLOR = (242, 242, 240)
 NAVY = (30, 58, 95)
@@ -82,10 +82,13 @@ class KioskDisplay:
         self._layout_cache: dict[str, list[tuple[pygame.Surface, PhotoPlacement]]] = {}
         self._layout_lock = threading.Lock()
         self._display_target: CachedAnimal | None = None
+        self._display_target_since = 0.0
         self._prefetch_queue: list[CachedAnimal] = []
         self._loader_lock = threading.Lock()
         self._loader_notify = threading.Condition(self._loader_lock)
         self._loader_stop = False
+        self._ready_queue: queue.Queue[str] = queue.Queue()
+        self._current_animal_id: str | None = None
         self._current_surfaces: list[tuple[pygame.Surface, PhotoPlacement]] = []
         self._current_name = ""
         self._current_bio = ""
@@ -106,14 +109,17 @@ class KioskDisplay:
         self._current_name = "No cached animals"
         self._current_bio = message
         self._current_qr = None
+        self._current_animal_id = None
 
     def clear_layout_cache(self) -> None:
         with self._layout_lock:
             self._layout_cache.clear()
         with self._loader_lock:
             self._display_target = None
+            self._display_target_since = 0.0
             self._prefetch_queue.clear()
         self._photo_cache.clear()
+        self._drain_ready_queue()
 
     def prewarm_animals(self, animals: list[CachedAnimal]) -> None:
         for animal in animals:
@@ -138,18 +144,18 @@ class KioskDisplay:
             self.set_empty("Use Update Cache in the menu while online.")
             with self._loader_lock:
                 self._display_target = None
+                self._display_target_since = 0.0
             return True
 
         if self._is_layout_cached(animal.id):
             surfaces = self._get_cached_layout(animal.id)
             self._apply_animal(animal, surfaces)
-            with self._loader_lock:
-                if self._display_target is not None and self._display_target.id == animal.id:
-                    self._display_target = None
+            self._clear_display_target_if_matches(animal.id)
             return True
 
         with self._loader_lock:
             self._display_target = animal
+            self._display_target_since = time.monotonic()
             self._loader_notify.notify()
         return False
 
@@ -158,14 +164,68 @@ class KioskDisplay:
             return False
         surfaces = self._get_cached_layout(animal.id)
         self._apply_animal(animal, surfaces)
-        with self._loader_lock:
-            if self._display_target is not None and self._display_target.id == animal.id:
-                self._display_target = None
+        self._clear_display_target_if_matches(animal.id)
         return True
+
+    def drain_ready_layout_ids(self) -> list[str]:
+        ready: list[str] = []
+        while True:
+            try:
+                ready.append(self._ready_queue.get_nowait())
+            except queue.Empty:
+                break
+        return ready
+
+    def recover_stuck_loading(self, timeout_seconds: float = 12.0) -> None:
+        with self._loader_lock:
+            if self._display_target is None:
+                return
+            if time.monotonic() - self._display_target_since < timeout_seconds:
+                return
+            log.warning(
+                "Clearing stuck display load for %s after %.0fs",
+                self._display_target.id,
+                timeout_seconds,
+            )
+            self._display_target = None
+            self._display_target_since = 0.0
 
     def is_loading(self) -> bool:
         with self._loader_lock:
             return self._display_target is not None
+
+    def needs_apply(self, animal: CachedAnimal) -> bool:
+        return self._current_animal_id != animal.id and self._is_layout_cached(animal.id)
+
+    def _clear_display_target_if_matches(self, animal_id: str) -> None:
+        with self._loader_lock:
+            if self._display_target is not None and self._display_target.id == animal_id:
+                self._display_target = None
+                self._display_target_since = 0.0
+
+    def _drain_ready_queue(self) -> None:
+        while True:
+            try:
+                self._ready_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _signal_layout_ready(self, animal_id: str) -> None:
+        try:
+            self._ready_queue.put_nowait(animal_id)
+        except queue.Full:
+            pass
+
+    def _complete_display_job(self, animal: CachedAnimal, built: bool) -> None:
+        with self._loader_lock:
+            still_target = (
+                self._display_target is not None and self._display_target.id == animal.id
+            )
+            if still_target:
+                self._display_target = None
+                self._display_target_since = 0.0
+        if still_target and built and self._is_layout_cached(animal.id):
+            self._signal_layout_ready(animal.id)
 
     def _is_layout_cached(self, animal_id: str) -> bool:
         with self._layout_lock:
@@ -192,22 +252,17 @@ class KioskDisplay:
 
             if self._is_layout_cached(animal.id):
                 if for_display:
-                    self._post_layout_ready(animal.id)
+                    self._complete_display_job(animal, built=True)
                 continue
 
+            built = False
             try:
-                self._prewarm_animal(animal)
+                built = self._prewarm_animal(animal)
             except Exception:
                 log.exception("Failed building layout for %s", animal.id)
-                continue
 
             if for_display:
-                with self._loader_lock:
-                    if self._display_target is not None and self._display_target.id == animal.id:
-                        self._post_layout_ready(animal.id)
-
-    def _post_layout_ready(self, animal_id: str) -> None:
-        pygame.event.post(pygame.event.Event(LAYOUT_READY_EVENT, animal_id=animal_id))
+                self._complete_display_job(animal, built=built)
 
     def _layout_key(self, animal_id: str) -> str:
         return f"{animal_id}:{self.width}x{self.height}"
@@ -216,12 +271,8 @@ class KioskDisplay:
         cache_key = self._layout_key(animal.id)
         with self._layout_lock:
             if cache_key in self._layout_cache:
-                return False
-        try:
-            surfaces = self._build_surfaces(animal)
-        except Exception:
-            log.exception("Failed prewarming layout for %s", animal.id)
-            return False
+                return True
+        surfaces = self._build_surfaces(animal)
         with self._layout_lock:
             if cache_key not in self._layout_cache:
                 self._layout_cache[cache_key] = surfaces
@@ -233,6 +284,7 @@ class KioskDisplay:
         surfaces: list[tuple[pygame.Surface, PhotoPlacement]],
     ) -> None:
         self._empty_message = None
+        self._current_animal_id = animal.id
         self._current_name = title_case(parse_display_name(animal.name))
         self._current_bio = format_card_text(animal)
         self._current_qr = self._load_qr(animal.id)
