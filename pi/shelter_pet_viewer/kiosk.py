@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import queue
 import random
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -94,6 +96,7 @@ class KioskDisplay:
         self._current_bio = ""
         self._current_qr: pygame.Surface | None = None
         self._empty_message: str | None = None
+        self._status_anim_ms = 0
 
         threading.Thread(target=self._loader_loop, name="layout-loader", daemon=True).start()
 
@@ -315,7 +318,15 @@ class KioskDisplay:
         surfaces.sort(key=lambda item: item[1].z_index)
         return surfaces
 
-    def draw(self, menu: MenuState, sync_status: str) -> None:
+    def draw(
+        self,
+        menu: MenuState,
+        sync_status: str,
+        *,
+        syncing: bool = False,
+        delta_ms: int = 0,
+    ) -> None:
+        self._status_anim_ms = (self._status_anim_ms + delta_ms) % 360_000
         self.screen.fill(BG_COLOR)
 
         if self._empty_message is not None:
@@ -328,6 +339,8 @@ class KioskDisplay:
 
         if menu.visible:
             self._draw_menu(menu, sync_status)
+
+        self._draw_status_indicators(syncing=syncing)
 
         pygame.display.flip()
 
@@ -414,6 +427,112 @@ class KioskDisplay:
         card.blit(scaled, (12, 12))
         card.blit(label, (card_w // 2 - label.get_width() // 2, qr_size + 20))
         self.screen.blit(card, (self.width - card_w - 36, self.height - card_h - 36))
+
+    def _draw_status_indicators(self, syncing: bool) -> None:
+        loading = self.is_loading()
+        if not loading and not syncing:
+            return
+
+        badge = 44
+        gap = 8
+        margin = 18
+        x = self.width - margin - badge
+        y = margin
+        indicators: list[tuple[str, Callable[[pygame.Surface, tuple[int, int], int], None]]] = []
+        if syncing:
+            indicators.append(("sync", self._draw_sync_icon))
+        if loading:
+            indicators.append(("loading", self._draw_loading_icon))
+
+        for kind, drawer in indicators:
+            self._draw_status_badge(x, y, badge, kind, drawer)
+            y += badge + gap
+
+    def _draw_status_badge(
+        self,
+        x: int,
+        y: int,
+        size: int,
+        kind: str,
+        drawer: Callable[[pygame.Surface, tuple[int, int], int], None],
+    ) -> None:
+        badge = pygame.Surface((size, size), pygame.SRCALPHA)
+        badge.fill((250, 250, 248, 220))
+        pygame.draw.rect(badge, (210, 218, 228), badge.get_rect(), 1, border_radius=10)
+        center = (size // 2, size // 2)
+        drawer(badge, center, size - 14)
+        self.screen.blit(badge, (x, y))
+
+    def _draw_loading_icon(self, surface: pygame.Surface, center: tuple[int, int], diameter: int) -> None:
+        radius = diameter // 2
+        angle = (self._status_anim_ms / 1000) * 360
+        for tick in range(12):
+            tick_angle = math.radians(angle + tick * 30)
+            brightness = 70 + int(185 * (tick + 1) / 12)
+            color = (brightness, brightness, min(255, brightness + 25))
+            inner = radius - 5
+            outer = radius
+            start = (
+                center[0] + inner * math.cos(tick_angle),
+                center[1] + inner * math.sin(tick_angle),
+            )
+            end = (
+                center[0] + outer * math.cos(tick_angle),
+                center[1] + outer * math.sin(tick_angle),
+            )
+            pygame.draw.line(surface, color, start, end, 2)
+
+    def _draw_sync_icon(self, surface: pygame.Surface, center: tuple[int, int], diameter: int) -> None:
+        radius = diameter // 2
+        pulse = 0.65 + 0.35 * math.sin(self._status_anim_ms / 220)
+        color = (int(30 + 40 * pulse), int(90 + 50 * pulse), int(150 + 40 * pulse))
+        rect = pygame.Rect(center[0] - radius, center[1] - radius, radius * 2, radius * 2)
+        start_a = math.radians((self._status_anim_ms / 12) % 360)
+        end_a = start_a + math.radians(220)
+        pygame.draw.arc(surface, color, rect, start_a, end_a, 3)
+        arrow_a = end_a
+        tip = (
+            center[0] + radius * math.cos(arrow_a),
+            center[1] + radius * math.sin(arrow_a),
+        )
+        wing_a1 = arrow_a + math.radians(150)
+        wing_a2 = arrow_a - math.radians(150)
+        wing_len = 6
+        pygame.draw.polygon(
+            surface,
+            color,
+            [
+                tip,
+                (tip[0] + wing_len * math.cos(wing_a1), tip[1] + wing_len * math.sin(wing_a1)),
+                (tip[0] + wing_len * math.cos(wing_a2), tip[1] + wing_len * math.sin(wing_a2)),
+            ],
+        )
+
+        inner_rect = pygame.Rect(
+            center[0] - radius + 6,
+            center[1] - radius + 6,
+            (radius - 6) * 2,
+            (radius - 6) * 2,
+        )
+        start_b = math.radians((self._status_anim_ms / 12 + 180) % 360)
+        end_b = start_b + math.radians(220)
+        pygame.draw.arc(surface, color, inner_rect, start_b, end_b, 3)
+        arrow_b = end_b
+        tip_b = (
+            center[0] + (radius - 6) * math.cos(arrow_b),
+            center[1] + (radius - 6) * math.sin(arrow_b),
+        )
+        wing_b1 = arrow_b + math.radians(150)
+        wing_b2 = arrow_b - math.radians(150)
+        pygame.draw.polygon(
+            surface,
+            color,
+            [
+                tip_b,
+                (tip_b[0] + wing_len * math.cos(wing_b1), tip_b[1] + wing_len * math.sin(wing_b1)),
+                (tip_b[0] + wing_len * math.cos(wing_b2), tip_b[1] + wing_len * math.sin(wing_b2)),
+            ],
+        )
 
     def _draw_empty_state(self) -> None:
         title = self.title_font.render(self._current_name, True, NAVY)

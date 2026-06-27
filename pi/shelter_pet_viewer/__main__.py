@@ -269,7 +269,12 @@ def main() -> int:
         sync_status = scheduler.status.last_message
         if scheduler.status.running:
             sync_status = "Syncing cache..."
-        display.draw(menu.state, sync_status)
+        display.draw(
+            menu.state,
+            sync_status,
+            syncing=scheduler.status.running,
+            delta_ms=delta,
+        )
 
     scheduler.stop()
     buttons.close()

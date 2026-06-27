@@ -89,6 +89,7 @@ class MenuController:
             return
 
         if item.action == MenuAction.SYNC_NOW:
+            self.state.status_line = "Updating cache..."
             self._on_sync_requested()
             return
 
