@@ -98,13 +98,17 @@ class KioskDisplay:
         self._empty_message: str | None = None
         self._status_anim_ms = 0
 
-        threading.Thread(target=self._loader_loop, name="layout-loader", daemon=True).start()
+        self._loader_thread = threading.Thread(target=self._loader_loop, name="layout-loader", daemon=True)
+        self._loader_thread.start()
 
     def close(self) -> None:
         self._loader_stop = True
         with self._loader_notify:
             self._loader_notify.notify_all()
-        pygame.quit()
+        if self._loader_thread.is_alive():
+            self._loader_thread.join(timeout=3.0)
+        if pygame.display.get_init():
+            pygame.quit()
 
     def set_empty(self, message: str) -> None:
         self._empty_message = message
@@ -264,11 +268,20 @@ class KioskDisplay:
                     self._complete_display_job(animal, built=True)
                 continue
 
+            if self._loader_stop:
+                return
+
             built = False
             try:
                 built = self._prewarm_animal(animal)
             except Exception:
-                log.exception("Failed building layout for %s", animal.id)
+                if self._loader_stop:
+                    log.debug("Skipped layout build for %s during shutdown", animal.id)
+                else:
+                    log.exception("Failed building layout for %s", animal.id)
+
+            if self._loader_stop:
+                return
 
             if for_display:
                 self._complete_display_job(animal, built=built)
@@ -277,6 +290,8 @@ class KioskDisplay:
         return f"{animal_id}:{self.width}x{self.height}"
 
     def _prewarm_animal(self, animal: CachedAnimal) -> bool:
+        if self._loader_stop or not pygame.display.get_init():
+            return False
         cache_key = self._layout_key(animal.id)
         with self._layout_lock:
             if cache_key in self._layout_cache:
@@ -395,6 +410,8 @@ class KioskDisplay:
             expand=True,
             fillcolor=(0, 0, 0, 0),
         )
+        if self._loader_stop or not pygame.display.get_init():
+            raise RuntimeError("display shutting down")
         return pygame.image.frombytes(rotated.tobytes(), rotated.size, "RGBA").convert_alpha()
 
     def _name_y(self) -> int:
