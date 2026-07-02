@@ -17,6 +17,7 @@ import qrcode
 from PIL import Image
 
 from .cache_loader import CachedAnimal, format_card_text, parse_display_name, title_case
+from .log_util import nav_info
 from .menu import MenuController, MenuState
 
 log = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ class KioskDisplay:
             self._clear_display_target_if_matches(animal.id)
             return True
 
-        log.info("[nav] show_animal deferred: %s (layout not cached, was showing %s)", animal.id, self._current_animal_id)
+        nav_info("show_animal deferred: %s (layout not cached, was showing %s)", animal.id, self._current_animal_id)
         with self._loader_lock:
             self._display_target = animal
             self._display_target_since = time.monotonic()
@@ -221,8 +222,8 @@ class KioskDisplay:
     def _cancel_display_target_if_not(self, animal_id: str) -> None:
         with self._loader_lock:
             if self._display_target is not None and self._display_target.id != animal_id:
-                log.info(
-                    "[nav] cancelling stale display load for %s (now showing %s)",
+                nav_info(
+                    "cancelling stale display load for %s (now showing %s)",
                     self._display_target.id,
                     animal_id,
                 )
@@ -244,7 +245,7 @@ class KioskDisplay:
                 break
 
     def _signal_layout_ready(self, animal_id: str) -> None:
-        log.info("[nav] layout ready for %s (display_target=%s)", animal_id, self._display_target_id())
+        nav_info("layout ready for %s (display_target=%s)", animal_id, self._display_target_id())
         try:
             self._ready_queue.put_nowait(animal_id)
         except queue.Full:
@@ -334,8 +335,8 @@ class KioskDisplay:
         *,
         source: str = "apply",
     ) -> None:
-        log.info(
-            "[nav] image shown: %s (%s) via %s (was %s)",
+        nav_info(
+            "image shown: %s (%s) via %s (was %s)",
             animal.id,
             title_case(parse_display_name(animal.name)),
             source,

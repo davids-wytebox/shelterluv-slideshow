@@ -276,7 +276,7 @@ Add to autostart:
 |------|------|
 | Cache | `~/.local/share/ShelterPetViewer/cache/adoption/` and `foster/` |
 | Settings | `~/.local/share/ShelterPetViewer/settings.json` |
-| Log | `~/.local/share/ShelterPetViewer/log.txt` |
+| Log | `~/.local/share/ShelterPetViewer/log.txt` — nav lines include timestamps and `+Xs` gap since last nav event |
 | Pi config | `~/shelterluv-slideshow/pi/config.json` |
 
 The cache layout matches Windows (`%AppData%\ShelterPetViewer\cache\`), so you can rsync a cache from a PC:

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import logging
 import random
 from typing import Any, Callable
 
 from .cache_loader import CachedAnimal
-
-log = logging.getLogger(__name__)
+from .log_util import nav_info
 
 
 class SlideshowSession:
@@ -65,8 +63,8 @@ class SlideshowSession:
 
     def show_previous(self) -> bool:
         if not self._can_go_back():
-            log.info(
-                "[nav] show_previous blocked: history_pos=%s history_len=%s animal=%s",
+            nav_info(
+                "show_previous blocked: history_pos=%s history_len=%s animal=%s",
                 self._history_position,
                 len(self._history),
                 self._animal_id(),
@@ -74,8 +72,8 @@ class SlideshowSession:
             return False
         self._history_position -= 1
         index = self._history[self._history_position]
-        log.info(
-            "[nav] show_previous: history_pos=%s/%s -> animal_index=%s id=%s",
+        nav_info(
+            "show_previous: history_pos=%s/%s -> animal_index=%s id=%s",
             self._history_position,
             len(self._history) - 1,
             index,

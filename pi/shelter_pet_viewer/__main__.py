@@ -11,7 +11,7 @@ import pygame
 from .cache_loader import load_cached_animals
 from .gpio_buttons import ButtonInput
 from .kiosk import KioskDisplay
-from .log_util import configure_logging
+from .log_util import configure_logging, nav_info, nav_warning
 from .menu import MenuController
 from .paths import app_data_dir, cache_root, pi_config_path
 from .settings import AppSettings
@@ -34,17 +34,17 @@ class ActionQueue:
         with self._lock:
             if len(self._items) >= 64:
                 dropped = self._items.pop(0)
-                log.warning("[nav] action_queue full; dropped oldest: %s", dropped)
+                nav_warning("action_queue full; dropped oldest: %s", dropped)
             self._items.append(action)
             if action == "back":
-                log.info("[nav] action_queue put: back (depth=%s)", len(self._items))
+                nav_info("action_queue put: back (depth=%s)", len(self._items))
 
     def drain(self) -> list[str]:
         with self._lock:
             items = self._items
             self._items = []
             if "back" in items:
-                log.info("[nav] action_queue drain: %s (depth=%s)", items, len(items))
+                nav_info("action_queue drain: %s (depth=%s)", items, len(items))
             return items
 
     def depth(self) -> int:
@@ -132,9 +132,9 @@ def main() -> int:
 
     def on_animal_changed(animal) -> None:
         if animal is None:
-            log.info("[nav] session changed: no animal")
+            nav_info("session changed: no animal")
         else:
-            log.info("[nav] session changed: %s loading=%s", animal.id, display.is_loading())
+            nav_info("session changed: %s loading=%s", animal.id, display.is_loading())
         if display.show_animal(animal):
             prefetch_neighbors()
 
@@ -191,8 +191,8 @@ def main() -> int:
         steps = min(abs(pending_nav), MAX_NAV_STEPS_PER_FRAME)
         direction = "forward" if pending_nav > 0 else "back"
         before = session.nav_snapshot()
-        log.info(
-            "[nav] process_pending_nav: %s steps=%s pending_nav=%s queue_depth=%s sync=%s loading=%s state=%s",
+        nav_info(
+            "process_pending_nav: %s steps=%s pending_nav=%s queue_depth=%s sync=%s loading=%s state=%s",
             direction,
             steps,
             pending_nav,
@@ -210,8 +210,8 @@ def main() -> int:
                 session.show_previous()
             pending_nav += steps
         after = session.nav_snapshot()
-        log.info(
-            "[nav] process_pending_nav done: pending_nav=%s state=%s -> %s",
+        nav_info(
+            "process_pending_nav done: pending_nav=%s state=%s -> %s",
             pending_nav,
             before,
             after,
@@ -244,7 +244,7 @@ def main() -> int:
 
         if reload_requested.is_set():
             reload_requested.clear()
-            log.info("[nav] reload_slideshow: clearing pending_nav")
+            nav_info("reload_slideshow: clearing pending_nav")
             pending_nav = 0
             reload_slideshow()
 
@@ -279,7 +279,7 @@ def main() -> int:
                     elif action == "forward":
                         forward_steps += 1
                     elif action == "back":
-                        log.info("[nav] keyboard back registered")
+                        nav_info("keyboard back registered")
                         back_steps += 1
                     else:
                         slideshow_actions.append(action)
@@ -287,8 +287,8 @@ def main() -> int:
         prev_pending = pending_nav
         pending_nav = max(-20, min(20, pending_nav + forward_steps - back_steps))
         if back_steps or forward_steps or (prev_pending != pending_nav and pending_nav != 0):
-            log.info(
-                "[nav] pending_nav %s -> %s (back_steps=%s forward_steps=%s queue_depth=%s sync=%s loading=%s loading_id=%s)",
+            nav_info(
+                "pending_nav %s -> %s (back_steps=%s forward_steps=%s queue_depth=%s sync=%s loading=%s loading_id=%s)",
                 prev_pending,
                 pending_nav,
                 back_steps,

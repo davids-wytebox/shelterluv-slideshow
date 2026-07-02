@@ -4,6 +4,8 @@ import logging
 import time
 from collections.abc import Callable
 
+from .log_util import nav_info
+
 log = logging.getLogger(__name__)
 
 try:
@@ -79,15 +81,15 @@ class ButtonInput:
             elapsed_ms = (now - last) * 1000
             if now - last < interval:
                 if name == "back":
-                    log.info(
-                        "[nav] gpio back suppressed by debounce (%.0fms since last, need %.0fms)",
+                    nav_info(
+                        "gpio back suppressed by debounce (%.0fms since last, need %.0fms)",
                         elapsed_ms,
                         interval * 1000,
                     )
                 return
             self._last_press[name] = now
             if name == "back":
-                log.info("[nav] gpio back press accepted (%.0fms since last)", elapsed_ms)
+                nav_info("gpio back press accepted (%.0fms since last)", elapsed_ms)
             handler()
 
         return wrapped
