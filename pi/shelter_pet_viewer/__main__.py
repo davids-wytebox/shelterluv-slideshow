@@ -257,13 +257,6 @@ def main() -> int:
         for action in action_queue.drain():
             if menu.state.visible:
                 menu_actions.append(action)
-            elif sync_in_progress:
-                if action == "back":
-                    log.info("[nav] back dropped: sync in progress (queue had back)")
-                elif action == "forward":
-                    log.info("[nav] forward dropped: sync in progress")
-                if action in ("menu", "return"):
-                    slideshow_actions.append(action)
             elif action == "forward":
                 forward_steps += 1
             elif action == "back":
@@ -283,13 +276,6 @@ def main() -> int:
                         continue
                     if menu.state.visible:
                         menu_actions.append(action)
-                    elif sync_in_progress:
-                        if action == "back":
-                            log.info("[nav] keyboard back dropped: sync in progress")
-                        elif action == "forward":
-                            log.info("[nav] keyboard forward dropped: sync in progress")
-                        if action in ("menu", "return"):
-                            slideshow_actions.append(action)
                     elif action == "forward":
                         forward_steps += 1
                     elif action == "back":
@@ -298,18 +284,20 @@ def main() -> int:
                     else:
                         slideshow_actions.append(action)
 
-        if not sync_in_progress:
-            prev_pending = pending_nav
-            pending_nav = max(-20, min(20, pending_nav + forward_steps - back_steps))
-            if back_steps or (prev_pending != pending_nav and pending_nav < 0):
-                log.info(
-                    "[nav] pending_nav %s -> %s (back_steps=%s forward_steps=%s queue_depth=%s)",
-                    prev_pending,
-                    pending_nav,
-                    back_steps,
-                    forward_steps,
-                    action_queue.depth(),
-                )
+        prev_pending = pending_nav
+        pending_nav = max(-20, min(20, pending_nav + forward_steps - back_steps))
+        if back_steps or forward_steps or (prev_pending != pending_nav and pending_nav != 0):
+            log.info(
+                "[nav] pending_nav %s -> %s (back_steps=%s forward_steps=%s queue_depth=%s sync=%s loading=%s loading_id=%s)",
+                prev_pending,
+                pending_nav,
+                back_steps,
+                forward_steps,
+                action_queue.depth(),
+                sync_in_progress,
+                display.is_loading(),
+                display.loading_animal_id(),
+            )
 
         display.recover_stuck_loading()
 
@@ -334,8 +322,15 @@ def main() -> int:
         apply_current_if_ready()
 
         session = session_holder["session"]
-        if session is not None and not menu.state.visible and not display.is_loading():
-            session.tick(delta)
+        current = session.current_animal() if session is not None else None
+        if session is not None and not menu.state.visible:
+            loading_for_current = (
+                display.is_loading()
+                and current is not None
+                and display.loading_animal_id() == current.id
+            )
+            if not loading_for_current:
+                session.tick(delta)
 
         sync_status = scheduler.status.last_message
         if scheduler.status.running:
@@ -345,6 +340,7 @@ def main() -> int:
             sync_status,
             syncing=scheduler.status.running,
             delta_ms=delta,
+            current_animal_id=current.id if current is not None else None,
         )
 
     scheduler.stop()

@@ -163,6 +163,7 @@ class KioskDisplay:
             return True
 
         if self._is_layout_cached(animal.id):
+            self._cancel_display_target_if_not(animal.id)
             surfaces = self._get_cached_layout(animal.id)
             self._apply_animal(animal, surfaces, source="show_animal")
             self._clear_display_target_if_matches(animal.id)
@@ -210,8 +211,24 @@ class KioskDisplay:
         with self._loader_lock:
             return self._display_target is not None
 
+    def loading_animal_id(self) -> str | None:
+        with self._loader_lock:
+            return self._display_target.id if self._display_target else None
+
     def needs_apply(self, animal: CachedAnimal) -> bool:
         return self._current_animal_id != animal.id and self._is_layout_cached(animal.id)
+
+    def _cancel_display_target_if_not(self, animal_id: str) -> None:
+        with self._loader_lock:
+            if self._display_target is not None and self._display_target.id != animal_id:
+                log.info(
+                    "[nav] cancelling stale display load for %s (now showing %s)",
+                    self._display_target.id,
+                    animal_id,
+                )
+                self._display_target = None
+                self._display_target_since = 0.0
+                self._loader_notify.notify()
 
     def _clear_display_target_if_matches(self, animal_id: str) -> None:
         with self._loader_lock:
@@ -363,6 +380,7 @@ class KioskDisplay:
         *,
         syncing: bool = False,
         delta_ms: int = 0,
+        current_animal_id: str | None = None,
     ) -> None:
         self._status_anim_ms = (self._status_anim_ms + delta_ms) % 360_000
         self.screen.fill(BG_COLOR)
@@ -378,7 +396,7 @@ class KioskDisplay:
         if menu.visible:
             self._draw_menu(menu, sync_status)
 
-        self._draw_status_indicators(syncing=syncing)
+        self._draw_status_indicators(syncing=syncing, current_animal_id=current_animal_id)
 
         pygame.display.flip()
 
@@ -468,8 +486,11 @@ class KioskDisplay:
         card.blit(label, (card_w // 2 - label.get_width() // 2, qr_size + 20))
         self.screen.blit(card, (self.width - card_w - 36, self.height - card_h - 36))
 
-    def _draw_status_indicators(self, syncing: bool) -> None:
-        loading = self.is_loading()
+    def _draw_status_indicators(self, syncing: bool, current_animal_id: str | None = None) -> None:
+        loading_id = self.loading_animal_id()
+        loading = loading_id is not None and (
+            current_animal_id is None or loading_id == current_animal_id
+        )
         if not loading and not syncing:
             return
 
