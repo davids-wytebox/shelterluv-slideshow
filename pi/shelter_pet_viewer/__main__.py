@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 
@@ -72,6 +73,23 @@ def _key_action(key: int) -> str | None:
     return mapping.get(key)
 
 
+def _log_display_environment() -> None:
+    display = os.environ.get("DISPLAY")
+    sdl_driver = os.environ.get("SDL_VIDEODRIVER")
+    log.info(
+        "Display environment: DISPLAY=%s XAUTHORITY=%s SDL_VIDEODRIVER=%s WAYLAND_DISPLAY=%s",
+        display,
+        os.environ.get("XAUTHORITY"),
+        sdl_driver,
+        os.environ.get("WAYLAND_DISPLAY"),
+    )
+    if not display and not sdl_driver:
+        log.warning(
+            "No DISPLAY or SDL_VIDEODRIVER set. The app may run but nothing will appear "
+            "on the monitor. From SSH use ./run-display.sh or: sudo systemctl start shelter-pet-viewer"
+        )
+
+
 def main() -> int:
     configure_logging()
     app_data_dir().mkdir(parents=True, exist_ok=True)
@@ -88,6 +106,7 @@ def main() -> int:
     hide_cursor = bool(config.get("hide_cursor", True))
 
     settings = AppSettings.load()
+    _log_display_environment()
     display = KioskDisplay(fullscreen=fullscreen, hide_cursor=hide_cursor)
     clock = pygame.time.Clock()
     action_queue = ActionQueue()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import os
 import queue
 import random
 import threading
@@ -70,6 +71,13 @@ class KioskDisplay:
         self.screen = pygame.display.set_mode((0, 0), flags) if fullscreen else pygame.display.set_mode((1280, 720))
         self.width, self.height = self.screen.get_size()
         pygame.display.set_caption("Shelter Pet Viewer")
+        log.info(
+            "Pygame display initialized: %sx%s fullscreen=%s driver=%s",
+            self.width,
+            self.height,
+            fullscreen,
+            os.environ.get("SDL_VIDEODRIVER") or os.environ.get("DISPLAY") or "default",
+        )
         if hide_cursor:
             pygame.mouse.set_visible(False)
 

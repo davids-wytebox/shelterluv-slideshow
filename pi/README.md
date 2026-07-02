@@ -85,15 +85,53 @@ nano config.json
 
 ### 4. Test manually
 
-Connect the Pi to your display, then:
+Connect the Pi to your display, then from a **terminal on the Pi desktop** (or SSH with display forwarding — see below):
+
+```bash
+cd ~/shelterluv-slideshow/pi
+./run-display.sh
+```
+
+Or:
 
 ```bash
 cd ~/shelterluv-slideshow/pi
 source .venv/bin/activate
+export DISPLAY=:0
+export XAUTHORITY=$HOME/.Xauthority
 python -m shelter_pet_viewer
 ```
 
 First launch syncs the cache in the background. Press **Menu** to change settings. Ctrl+Q exits.
+
+### Starting from SSH
+
+SSH sessions do **not** have a display by default. The app may run and log `[nav] image shown` lines, but nothing appears on the monitor unless you point pygame at the desktop session.
+
+**Recommended — use systemd** (already sets `DISPLAY=:0`):
+
+```bash
+sudo systemctl start shelter-pet-viewer    # or restart
+sudo systemctl status shelter-pet-viewer
+```
+
+**Manual test from SSH** (desktop must be logged in via autologin):
+
+```bash
+cd ~/shelterluv-slideshow/pi
+chmod +x run-display.sh
+./run-display.sh
+```
+
+This script stops any running systemd instance (so two copies don't fight over the screen), exports `DISPLAY=:0`, and starts the app.
+
+If you get permission errors connecting to X11, run once from the desktop terminal:
+
+```bash
+xhost +SI:localuser:$USER
+```
+
+**Do not** run `python -m shelter_pet_viewer` bare over SSH — it will not show on the HDMI output.
 
 ## Raspberry Pi Zero 2 W
 
@@ -264,6 +302,7 @@ rsync -av "/mnt/windows/Users/YourName/AppData/Roaming/ShelterPetViewer/cache/" 
 | `lgpio` / `RPi.GPIO` / `pigpio` missing | Run `./setup.sh` again, or `sudo apt install python3-lgpio` then recreate venv: `rm -rf .venv && ./setup.sh` |
 | No animals shown | Wait for first sync or run manual update; check log file |
 | pygame won't start | Run from desktop session (needs `DISPLAY=:0`), not SSH without X |
+| SSH runs but black screen | Use `sudo systemctl start shelter-pet-viewer` or `./run-display.sh`; bare `python -m` over SSH draws nowhere |
 | GPIO "permission denied" | `sudo usermod -aG gpio $USER` and re-login |
 | Zero 2 sluggish or OOM | Pre-sync cache from PC; try `shelter-pet-viewer-kms.service`; use 1080p display |
 | Zero 2 freezes or lightning bolt icon | Weak power supply — use 2.5 A adapter and a short cable |

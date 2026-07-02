@@ -40,4 +40,4 @@ else
   echo "Buttons will fall back to keyboard until lgpio is installed."
 fi
 
-echo "Setup complete. Run: source .venv/bin/activate && python -m shelter_pet_viewer"
+echo "Setup complete. Run: ./run-display.sh  (or use systemd on boot)"
