@@ -27,6 +27,7 @@ NAVY = (30, 58, 95)
 WHITE = (255, 255, 255)
 CARD_BG = (250, 250, 248)
 TEXT_MUTED = (68, 68, 68)
+MAX_PREFETCH_QUEUE = 3
 
 
 @dataclass(frozen=True)
@@ -88,9 +89,10 @@ class KioskDisplay:
         self.menu_title_font = pygame.font.SysFont("DejaVu Sans", 36, bold=True)
         self.hint_font = pygame.font.SysFont("DejaVu Sans", 18)
 
-        self._photo_cache: dict[str, pygame.Surface] = {}
+        self._photo_cache: dict[str, Image.Image] = {}
         self._qr_cache: dict[str, pygame.Surface] = {}
-        self._layout_cache: dict[str, list[tuple[pygame.Surface, PhotoPlacement]]] = {}
+        self._layout_cache: dict[str, list[tuple[Image.Image, PhotoPlacement]]] = {}
+        self._layout_surface_cache: dict[str, list[tuple[pygame.Surface, PhotoPlacement]]] = {}
         self._layout_lock = threading.Lock()
         self._display_target: CachedAnimal | None = None
         self._display_target_since = 0.0
@@ -130,6 +132,7 @@ class KioskDisplay:
     def clear_layout_cache(self) -> None:
         with self._layout_lock:
             self._layout_cache.clear()
+            self._layout_surface_cache.clear()
         with self._loader_lock:
             self._display_target = None
             self._display_target_since = 0.0
@@ -150,6 +153,8 @@ class KioskDisplay:
             if self._display_target is not None and self._display_target.id == animal.id:
                 return
             if any(item.id == animal.id for item in self._prefetch_queue):
+                return
+            if len(self._prefetch_queue) >= MAX_PREFETCH_QUEUE:
                 return
             self._prefetch_queue.append(animal)
             self._loader_notify.notify()
@@ -271,8 +276,19 @@ class KioskDisplay:
             return self._layout_key(animal_id) in self._layout_cache
 
     def _get_cached_layout(self, animal_id: str) -> list[tuple[pygame.Surface, PhotoPlacement]]:
+        key = self._layout_key(animal_id)
+        if key in self._layout_surface_cache:
+            return self._layout_surface_cache[key]
         with self._layout_lock:
-            return self._layout_cache[self._layout_key(animal_id)]
+            pil_frames = self._layout_cache[key]
+        surfaces = [(self._pil_to_surface(image), placement) for image, placement in pil_frames]
+        self._layout_surface_cache[key] = surfaces
+        return surfaces
+
+    @staticmethod
+    def _pil_to_surface(image: Image.Image) -> pygame.Surface:
+        rgba = image.convert("RGBA")
+        return pygame.image.frombytes(rgba.tobytes(), rgba.size, "RGBA").convert_alpha()
 
     def _loader_loop(self) -> None:
         while not self._loader_stop:
@@ -316,17 +332,18 @@ class KioskDisplay:
         return f"{animal_id}:{self.width}x{self.height}"
 
     def _prewarm_animal(self, animal: CachedAnimal) -> bool:
-        if self._loader_stop or not pygame.display.get_init():
+        if self._loader_stop:
             return False
         cache_key = self._layout_key(animal.id)
         with self._layout_lock:
             if cache_key in self._layout_cache:
                 return True
-        surfaces = self._build_surfaces(animal)
+        frames = self._build_frames_pil(animal)
         with self._layout_lock:
             if cache_key not in self._layout_cache:
-                self._layout_cache[cache_key] = surfaces
-        return True
+                self._layout_cache[cache_key] = frames
+                self._layout_surface_cache.pop(cache_key, None)
+        return bool(frames)
 
     def _apply_animal(
         self,
@@ -349,11 +366,11 @@ class KioskDisplay:
         self._current_qr = self._load_qr(animal.id)
         self._current_surfaces = surfaces
 
-    def _build_surfaces(self, animal: CachedAnimal) -> list[tuple[pygame.Surface, PhotoPlacement]]:
+    def _build_frames_pil(self, animal: CachedAnimal) -> list[tuple[Image.Image, PhotoPlacement]]:
         layout_random = random.Random(hash(animal.id.lower()) & 0xFFFFFFFF)
-        surfaces: list[tuple[pygame.Surface, PhotoPlacement]] = []
+        frames: list[tuple[Image.Image, PhotoPlacement]] = []
 
-        photos = [self._load_photo(path) for path in animal.photo_paths[:5]]
+        photos = [self._load_photo_pil(path) for path in animal.photo_paths[:5]]
         photos = [photo for photo in photos if photo is not None]
         if not photos:
             return []
@@ -361,7 +378,7 @@ class KioskDisplay:
         if len(photos) == 1:
             placement = PhotoPlacement(0.50, 0.52, 0.78, -2, 1)
             jitter = (layout_random.random() - 0.5) * 4
-            surfaces.append((self._compose_photo(photos[0], placement, jitter), placement))
+            frames.append((self._compose_photo_pil(photos[0], placement, jitter), placement))
         else:
             placements = PLACEMENTS.get(len(photos), PLACEMENTS[5])
             for index, photo in enumerate(photos):
@@ -369,10 +386,10 @@ class KioskDisplay:
                 placement = placements[placement_index]
                 jitter = (layout_random.random() - 0.5) * 4
                 rotation = placement.rotation + jitter
-                surfaces.append((self._compose_photo(photo, placement, rotation), placement))
+                frames.append((self._compose_photo_pil(photo, placement, rotation), placement))
 
-        surfaces.sort(key=lambda item: item[1].z_index)
-        return surfaces
+        frames.sort(key=lambda item: item[1].z_index)
+        return frames
 
     def draw(
         self,
@@ -411,18 +428,17 @@ class KioskDisplay:
             )
             self.screen.blit(surface, rect)
 
-    def _compose_photo(self, photo: pygame.Surface, placement: PhotoPlacement, rotation: float) -> pygame.Surface:
+    def _compose_photo_pil(self, photo: Image.Image, placement: PhotoPlacement, rotation: float) -> Image.Image:
         max_side = min(self.width, self.height) * placement.scale
-        scale = min(max_side / photo.get_width(), max_side / photo.get_height())
+        scale = min(max_side / photo.width, max_side / photo.height)
         target = (
-            max(1, int(photo.get_width() * scale)),
-            max(1, int(photo.get_height() * scale)),
+            max(1, int(photo.width * scale)),
+            max(1, int(photo.height * scale)),
         )
 
         padding = 12
         border = 2
-        pil = Image.frombytes("RGB", photo.get_size(), pygame.image.tobytes(photo, "RGB"))
-        pil = pil.resize(target, Image.Resampling.LANCZOS).convert("RGBA")
+        pil = photo.resize(target, Image.Resampling.LANCZOS).convert("RGBA")
 
         frame_w = target[0] + padding * 2 + border * 2
         frame_h = target[1] + padding * 2 + border * 2
@@ -431,15 +447,12 @@ class KioskDisplay:
         inner.paste(pil, (padding, padding))
         framed.paste(inner, (border, border))
 
-        rotated = framed.rotate(
+        return framed.rotate(
             rotation,
             resample=Image.Resampling.BICUBIC,
             expand=True,
             fillcolor=(0, 0, 0, 0),
         )
-        if self._loader_stop or not pygame.display.get_init():
-            raise RuntimeError("display shutting down")
-        return pygame.image.frombytes(rotated.tobytes(), rotated.size, "RGBA").convert_alpha()
 
     def _name_y(self) -> int:
         return max(120, int(self.height * 0.10))
@@ -648,7 +661,7 @@ class KioskDisplay:
             self.screen.blit(text, (panel_x + 24, footer_y))
             footer_y += 20
 
-    def _load_photo(self, path: Path) -> pygame.Surface | None:
+    def _load_photo_pil(self, path: Path) -> Image.Image | None:
         key = str(path.resolve())
         try:
             mtime = path.stat().st_mtime_ns
@@ -659,11 +672,9 @@ class KioskDisplay:
             return self._photo_cache[cache_key]
         try:
             image = Image.open(path).convert("RGB")
-            data = image.tobytes()
-            surface = pygame.image.frombytes(data, image.size, "RGB")
-            self._photo_cache[cache_key] = surface
-            return surface
-        except (OSError, pygame.error) as exc:
+            self._photo_cache[cache_key] = image
+            return image
+        except OSError as exc:
             log.error("Failed loading image %s: %s", path, exc)
             return None
 

@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import threading
+import time
 
 import pygame
 
@@ -236,6 +237,7 @@ def main() -> int:
     scheduler.start()
 
     pending_nav = 0
+    last_heartbeat = time.monotonic()
 
     running = True
     while running:
@@ -342,6 +344,18 @@ def main() -> int:
             delta_ms=delta,
             current_animal_id=current.id if current is not None else None,
         )
+
+        now = time.monotonic()
+        if now - last_heartbeat >= 30:
+            log.info(
+                "heartbeat: loop alive pending_nav=%s loading=%s loading_id=%s sync=%s queue_depth=%s",
+                pending_nav,
+                display.is_loading(),
+                display.loading_animal_id(),
+                scheduler.status.running,
+                action_queue.depth(),
+            )
+            last_heartbeat = now
 
     scheduler.stop()
     buttons.close()
