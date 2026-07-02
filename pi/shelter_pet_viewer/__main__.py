@@ -142,7 +142,7 @@ def main() -> int:
     reload_requested = threading.Event()
 
     def reload_slideshow() -> None:
-        animals = load_cached_animals(settings.mode, cache_root())
+        animals = load_cached_animals(settings.mode, cache_root(), settings.species_filter)
         display.clear_layout_cache()
         session = session_holder["session"]
         if session is None:
@@ -168,7 +168,9 @@ def main() -> int:
         if session is not None:
             session.auto_advance_seconds = settings.auto_advance_seconds
         reload_slideshow()
-        menu.set_status(f"Saved: {settings.mode.value}, {settings.auto_advance_seconds}s")
+        menu.set_status(
+            f"Saved: {settings.mode.value}, {settings.species_filter.value}, {settings.auto_advance_seconds}s"
+        )
 
     scheduler = SyncScheduler(interval_hours=sync_hours, on_complete=request_reload)
     menu = MenuController(settings, on_settings_changed, on_sync_requested=scheduler.request_sync)

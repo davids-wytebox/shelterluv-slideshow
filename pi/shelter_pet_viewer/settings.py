@@ -13,12 +13,19 @@ class ViewMode(str, Enum):
     FOSTER = "Foster"
 
 
+class SpeciesFilter(str, Enum):
+    ALL = "All"
+    DOGS = "Dogs"
+    CATS = "Cats"
+
+
 AUTO_ADVANCE_OPTIONS = [10, 15, 20, 30, 45, 60]
 
 
 @dataclass
 class AppSettings:
     mode: ViewMode = ViewMode.ADOPTION
+    species_filter: SpeciesFilter = SpeciesFilter.ALL
     auto_advance_seconds: int = 45
     history_size: int = 20
 
@@ -39,6 +46,12 @@ class AppSettings:
         except ValueError:
             mode = ViewMode.ADOPTION
 
+        species_raw = data.get("SpeciesFilter", "All")
+        try:
+            species_filter = SpeciesFilter(species_raw)
+        except ValueError:
+            species_filter = SpeciesFilter.ALL
+
         seconds = int(data.get("AutoAdvanceSeconds", 45))
         if seconds not in AUTO_ADVANCE_OPTIONS:
             seconds = 45
@@ -47,7 +60,12 @@ class AppSettings:
         if history < 1:
             history = 20
 
-        return cls(mode=mode, auto_advance_seconds=seconds, history_size=history)
+        return cls(
+            mode=mode,
+            species_filter=species_filter,
+            auto_advance_seconds=seconds,
+            history_size=history,
+        )
 
     def save(self) -> None:
         path = settings_path()
@@ -61,6 +79,7 @@ class AppSettings:
                 existing = {}
 
         existing["Mode"] = self.mode.value
+        existing["SpeciesFilter"] = self.species_filter.value
         existing["AutoAdvanceSeconds"] = self.auto_advance_seconds
         existing["HistorySize"] = self.history_size
 

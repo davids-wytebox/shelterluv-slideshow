@@ -25,7 +25,7 @@ public sealed class CacheService
 
     public string CacheRoot => _cacheRoot;
 
-    public IReadOnlyList<CachedAnimal> LoadCachedAnimals(ViewMode mode)
+    public IReadOnlyList<CachedAnimal> LoadCachedAnimals(ViewMode mode, SpeciesFilter speciesFilter = SpeciesFilter.All)
     {
         var modeDir = GetModeDirectory(mode);
         if (!Directory.Exists(modeDir))
@@ -39,6 +39,9 @@ public sealed class CacheService
                 continue;
 
             if (!TryParseInfoFile(infoPath, out var animal))
+                continue;
+
+            if (!MatchesSpeciesFilter(animal.Species, speciesFilter))
                 continue;
 
             var photos = GetCachedPhotoPaths(animalDir);
@@ -159,6 +162,20 @@ public sealed class CacheService
         var adoption = await SyncAsync(ViewMode.Adoption, progress, cancellationToken);
         var foster = await SyncAsync(ViewMode.Foster, progress, cancellationToken);
         return (adoption, foster);
+    }
+
+    private static bool MatchesSpeciesFilter(string species, SpeciesFilter speciesFilter)
+    {
+        if (speciesFilter == SpeciesFilter.All)
+            return true;
+
+        var normalized = species.Trim().ToLowerInvariant();
+        return speciesFilter switch
+        {
+            SpeciesFilter.Dogs => normalized is "dog" or "dogs",
+            SpeciesFilter.Cats => normalized is "cat" or "cats",
+            _ => true
+        };
     }
 
     private static bool TryParseInfoFile(string infoPath, out (string Name, string Species, string Sex, string Weight, string Breed, string Age) animal)

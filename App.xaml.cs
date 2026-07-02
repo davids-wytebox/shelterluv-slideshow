@@ -137,12 +137,12 @@ public partial class App : Application
         menu.Items.Add(new ToolStripSeparator());
 
         var modeMenu = new ToolStripMenuItem("Animal Set");
-        var adoptionItem = new ToolStripMenuItem("Adoption (Dogs + Cats)")
+        var adoptionItem = new ToolStripMenuItem("Adoption")
         {
             Checked = _settings.Mode == ViewMode.Adoption,
             CheckOnClick = true
         };
-        var fosterItem = new ToolStripMenuItem("Foster (Dogs + Cats)")
+        var fosterItem = new ToolStripMenuItem("Foster")
         {
             Checked = _settings.Mode == ViewMode.Foster,
             CheckOnClick = true
@@ -154,6 +154,32 @@ public partial class App : Application
         modeMenu.DropDownItems.Add(adoptionItem);
         modeMenu.DropDownItems.Add(fosterItem);
         menu.Items.Add(modeMenu);
+
+        var speciesMenu = new ToolStripMenuItem("Animals Shown");
+        var allSpeciesItem = new ToolStripMenuItem("Dogs and Cats")
+        {
+            Checked = _settings.SpeciesFilter == SpeciesFilter.All,
+            CheckOnClick = true
+        };
+        var dogsOnlyItem = new ToolStripMenuItem("Dogs only")
+        {
+            Checked = _settings.SpeciesFilter == SpeciesFilter.Dogs,
+            CheckOnClick = true
+        };
+        var catsOnlyItem = new ToolStripMenuItem("Cats only")
+        {
+            Checked = _settings.SpeciesFilter == SpeciesFilter.Cats,
+            CheckOnClick = true
+        };
+
+        allSpeciesItem.Click += (_, _) => SetSpeciesFilter(SpeciesFilter.All, allSpeciesItem, dogsOnlyItem, catsOnlyItem);
+        dogsOnlyItem.Click += (_, _) => SetSpeciesFilter(SpeciesFilter.Dogs, allSpeciesItem, dogsOnlyItem, catsOnlyItem);
+        catsOnlyItem.Click += (_, _) => SetSpeciesFilter(SpeciesFilter.Cats, allSpeciesItem, dogsOnlyItem, catsOnlyItem);
+
+        speciesMenu.DropDownItems.Add(allSpeciesItem);
+        speciesMenu.DropDownItems.Add(dogsOnlyItem);
+        speciesMenu.DropDownItems.Add(catsOnlyItem);
+        menu.Items.Add(speciesMenu);
 
         var displayMenu = new ToolStripMenuItem("Display On");
         var secondaryItem = new ToolStripMenuItem(DisplayService.DescribeTarget(DisplayTarget.SecondaryScreen))
@@ -231,6 +257,25 @@ public partial class App : Application
         }
     }
 
+    private void SetSpeciesFilter(
+        SpeciesFilter speciesFilter,
+        ToolStripMenuItem allSpeciesItem,
+        ToolStripMenuItem dogsOnlyItem,
+        ToolStripMenuItem catsOnlyItem)
+    {
+        _settings.SpeciesFilter = speciesFilter;
+        allSpeciesItem.Checked = speciesFilter == SpeciesFilter.All;
+        dogsOnlyItem.Checked = speciesFilter == SpeciesFilter.Dogs;
+        catsOnlyItem.Checked = speciesFilter == SpeciesFilter.Cats;
+        _settingsService.Save(_settings);
+
+        if (_fullscreenWindows.Count > 0)
+        {
+            CloseAllFullscreen();
+            ShowFullscreen();
+        }
+    }
+
     private void SetAutoAdvanceSeconds(int seconds, ToolStripMenuItem intervalMenu)
     {
         _settings.AutoAdvanceSeconds = seconds;
@@ -247,6 +292,9 @@ public partial class App : Application
     {
         if (!AutoAdvanceOptions.Contains(_settings.AutoAdvanceSeconds))
             _settings.AutoAdvanceSeconds = 45;
+
+        if (!Enum.IsDefined(_settings.SpeciesFilter))
+            _settings.SpeciesFilter = SpeciesFilter.All;
     }
 
     private void SetDisplayTarget(
@@ -277,7 +325,7 @@ public partial class App : Application
             return;
         }
 
-        var animals = _cacheService.LoadCachedAnimals(_settings.Mode);
+        var animals = _cacheService.LoadCachedAnimals(_settings.Mode, _settings.SpeciesFilter);
         var screens = DisplayService.GetScreens(_settings.DisplayTarget);
         if (screens.Count == 0)
         {
@@ -311,9 +359,11 @@ public partial class App : Application
             return;
 
         FullscreenWindow.ClearBitmapCache();
-        var animals = _cacheService.LoadCachedAnimals(_settings.Mode);
+        var animals = _cacheService.LoadCachedAnimals(_settings.Mode, _settings.SpeciesFilter);
         _slideshowSession.ReloadAnimals(animals);
-        LogService.Info($"Reloaded slideshow with {animals.Count} cached {_settings.Mode} animals.");
+        LogService.Info(
+            $"Reloaded slideshow with {animals.Count} cached {_settings.Mode} animals " +
+            $"({_settings.SpeciesFilter} filter).");
     }
 
     private void OnFullscreenWindowClosed(object? sender, EventArgs e)

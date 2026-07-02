@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .settings import ViewMode
+from .settings import SpeciesFilter, ViewMode
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,22 @@ def _photo_paths(animal_dir: Path) -> list[Path]:
     return [path for _, path in paths[:5]]
 
 
-def load_cached_animals(mode: ViewMode, cache_root: Path) -> list[CachedAnimal]:
+def matches_species_filter(species: str, species_filter: SpeciesFilter) -> bool:
+    if species_filter == SpeciesFilter.ALL:
+        return True
+    normalized = species.strip().lower()
+    if species_filter == SpeciesFilter.DOGS:
+        return normalized in {"dog", "dogs"}
+    if species_filter == SpeciesFilter.CATS:
+        return normalized in {"cat", "cats"}
+    return True
+
+
+def load_cached_animals(
+    mode: ViewMode,
+    cache_root: Path,
+    species_filter: SpeciesFilter = SpeciesFilter.ALL,
+) -> list[CachedAnimal]:
     mode_dir = cache_root / mode.value.lower()
     if not mode_dir.is_dir():
         return []
@@ -123,6 +138,6 @@ def load_cached_animals(mode: ViewMode, cache_root: Path) -> list[CachedAnimal]:
         if not info_path.is_file():
             continue
         animal = _parse_info_file(info_path)
-        if animal is not None:
+        if animal is not None and matches_species_filter(animal.species, species_filter):
             animals.append(animal)
     return animals

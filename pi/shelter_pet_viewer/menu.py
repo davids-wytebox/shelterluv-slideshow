@@ -4,15 +4,17 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable
 
-from .settings import AUTO_ADVANCE_OPTIONS, AppSettings, ViewMode
+from .settings import AUTO_ADVANCE_OPTIONS, AppSettings, SpeciesFilter, ViewMode
 
 
 class MenuAction(Enum):
     NONE = auto()
     OPEN_ANIMAL_SET = auto()
+    OPEN_SPECIES_FILTER = auto()
     OPEN_INTERVAL = auto()
     SYNC_NOW = auto()
     SET_MODE = auto()
+    SET_SPECIES_FILTER = auto()
     SET_INTERVAL = auto()
 
 
@@ -100,6 +102,13 @@ class MenuController:
             self.state.stack = [self._root_items(), self._animal_set_items()]
             return
 
+        if item.action == MenuAction.SET_SPECIES_FILTER and isinstance(item.value, str):
+            self._settings.species_filter = SpeciesFilter(item.value)
+            self._settings.save()
+            self._on_settings_changed(self._settings)
+            self.state.stack = [self._root_items(), self._species_filter_items()]
+            return
+
         if item.action == MenuAction.SET_INTERVAL and isinstance(item.value, int):
             self._settings.auto_advance_seconds = item.value
             self._settings.save()
@@ -109,29 +118,65 @@ class MenuController:
 
     def _root_items(self) -> list[MenuItem]:
         mode_label = self._settings.mode.value
+        species_label = self._species_filter_label(self._settings.species_filter)
         interval_label = f"{self._settings.auto_advance_seconds} seconds"
         return [
             MenuItem("Animal Set", action=MenuAction.OPEN_ANIMAL_SET, submenu=self._animal_set_items()),
+            MenuItem(
+                "Animals Shown",
+                action=MenuAction.OPEN_SPECIES_FILTER,
+                submenu=self._species_filter_items(),
+            ),
             MenuItem("Slide Interval", action=MenuAction.OPEN_INTERVAL, submenu=self._interval_items()),
             MenuItem("Update Cache Now", action=MenuAction.SYNC_NOW),
-            MenuItem(f"Current: {mode_label}, {interval_label}"),
+            MenuItem(f"Current: {mode_label}, {species_label}, {interval_label}"),
         ]
 
     def _animal_set_items(self) -> list[MenuItem]:
         return [
             MenuItem(
-                "Adoption (Dogs + Cats)",
+                "Adoption",
                 action=MenuAction.SET_MODE,
                 value=ViewMode.ADOPTION.value,
                 checked=self._settings.mode == ViewMode.ADOPTION,
             ),
             MenuItem(
-                "Foster (Dogs + Cats)",
+                "Foster",
                 action=MenuAction.SET_MODE,
                 value=ViewMode.FOSTER.value,
                 checked=self._settings.mode == ViewMode.FOSTER,
             ),
         ]
+
+    def _species_filter_items(self) -> list[MenuItem]:
+        return [
+            MenuItem(
+                "Dogs and Cats",
+                action=MenuAction.SET_SPECIES_FILTER,
+                value=SpeciesFilter.ALL.value,
+                checked=self._settings.species_filter == SpeciesFilter.ALL,
+            ),
+            MenuItem(
+                "Dogs only",
+                action=MenuAction.SET_SPECIES_FILTER,
+                value=SpeciesFilter.DOGS.value,
+                checked=self._settings.species_filter == SpeciesFilter.DOGS,
+            ),
+            MenuItem(
+                "Cats only",
+                action=MenuAction.SET_SPECIES_FILTER,
+                value=SpeciesFilter.CATS.value,
+                checked=self._settings.species_filter == SpeciesFilter.CATS,
+            ),
+        ]
+
+    @staticmethod
+    def _species_filter_label(species_filter: SpeciesFilter) -> str:
+        if species_filter == SpeciesFilter.DOGS:
+            return "Dogs only"
+        if species_filter == SpeciesFilter.CATS:
+            return "Cats only"
+        return "Dogs and Cats"
 
     def _interval_items(self) -> list[MenuItem]:
         return [
